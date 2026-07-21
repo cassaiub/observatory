@@ -1,7 +1,12 @@
-/phase_2/astrometry_data
-/phase_4/phase4_RGB_NGC6302.ipynb
+# Photometric Pipeline (Updated paths)
+/photometric_pipeline/phase_2/astrometry_data/
+/photometric_pipeline/phase_4/
+
+# Camera Characterization
 /camera_characterization/data/bias/*.fit
 /camera_characterization/data/dark/*.fit
 /camera_characterization/data/flat/*.fit
 /camera_characterization/data/spectra/*.csv
+
+# DIMM
 /DIMM/dimm_simulated_cube.fits
