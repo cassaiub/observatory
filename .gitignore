@@ -1,2 +1,7 @@
 /phase_2/astrometry_data
 /phase_4/phase4_RGB_NGC6302.ipynb
+/camera_characterization/data/bias/*.fit
+/camera_characterization/data/dark/*.fit
+/camera_characterization/data/flat/*.fit
+/camera_characterization/data/spectra/*.csv
+/DIMM/dimm_simulated_cube.fits
