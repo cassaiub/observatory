@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cassa-photometry"
+version = "0.1.0"
+description = "End-to-end photometric reduction pipeline for the CASSA Observatory / iTelescope network, with full error propagation."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "CASSA Observatory" }]
+keywords = ["astronomy", "photometry", "ccd", "data-reduction", "astrometry"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Intended Audience :: Science/Research",
+]
+
+dependencies = [
+    "numpy",
+    "scipy",
+    "astropy>=5.0",
+    "ccdproc>=2.3",
+    "astroscrappy",
+    "photutils>=1.5",
+    "astroalign",
+    "scikit-image",
+    "astroquery",
+    "matplotlib",
+    "pandas",
+    "psutil",
+    "tqdm",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
+
+[project.scripts]
+cassa-calibrate = "cassa_photometry.cli:calibrate"
+cassa-integrate = "cassa_photometry.cli:integrate"
+cassa-photometry = "cassa_photometry.cli:photometry"
+cassa-verify = "cassa_photometry.cli:verify"
+cassa-diagnose = "cassa_photometry.cli:diagnose"
+cassa-run = "cassa_photometry.cli:run_all"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cassa_photometry = ["data/*.cfg"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
