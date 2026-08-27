@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cassa-dimm"
+version = "0.1.0"
+description = "Professional Differential Image Motion Monitor (DIMM) seeing pipeline for the CASSA Observatory."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "CASSA Observatory" }]
+keywords = ["astronomy", "seeing", "dimm", "atmosphere", "turbulence"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+
+dependencies = [
+    "numpy",
+    "scipy",
+    "astropy>=5.0",
+    "photutils>=1.5",
+    "matplotlib",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
+
+[project.scripts]
+cassa-dimm-monitor = "cassa_dimm.cli:monitor"
+cassa-dimm-batch = "cassa_dimm.cli:batch"
+cassa-dimm-sim = "cassa_dimm.cli:simulate"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

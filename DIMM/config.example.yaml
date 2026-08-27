@@ -1,0 +1,50 @@
+# Example cassa-dimm configuration. Copy, edit, and pass with --config.
+# Only the keys you want to override need to be present.
+
+hardware:
+  pixel_size_um: 3.75          # camera pixel pitch
+  focal_length_mm: 1000.0      # 8-inch f/5 Newtonian
+  aperture_diameter_m: 0.06    # D: one mask hole diameter
+  hole_separation_m: 0.15      # d: hole centre-to-centre separation
+  wavelength_m: 5.0e-7         # 500 nm
+  read_noise: 10.0
+  saturation_adu: 60000.0
+  # Optionally pin the prism doublet vector (pixels) instead of auto-detecting:
+  # prism_dx_pix: 40.0
+  # prism_dy_pix: 0.0
+
+site:                          # REQUIRED for airmass/zenith correction
+  latitude_deg: 0.0            # <-- set to the CASSA site latitude
+  longitude_deg: 0.0           # <-- set to the CASSA site longitude (East +)
+  elevation_m: 0.0
+
+watch:
+  folder: ./dimm_watch         # folder the acquisition server writes frames into
+  pattern: "*.fit*"
+  poll_interval_s: 2.0
+  window_frames: 150           # rolling window per estimate
+  cadence_frames: 50           # emit an estimate every N new frames
+  stabilization_s: 0.5         # wait for a file to finish writing
+  process_existing: false      # true = also process files already present at startup
+
+detection:
+  snr_threshold: 5.0
+  fwhm_pixels: 3.5
+  centroid_box: 9              # increase (e.g. 13-15) for larger off-axis PSFs
+  pair_tol_pixels: 2.0
+  # Wide-field controls (defaults reproduce the small-field behaviour):
+  central_radius_arcmin: 0.0   # >0: use only stars within this radius of the centre
+  ema_window: 50               # frames averaged into the streaming detection reference
+  warmup_frames: 15            # frames before the first streaming detection
+  refresh_frames: 300          # re-detect the doublet geometry every N frames
+
+qc:
+  min_frames: 30
+  min_valid_fraction: 0.5
+  min_doublets: 1
+  sigma_clip: 4.0
+  max_lt_discrepancy: 0.6
+  max_ellipticity: 0.4         # reject coma-smeared / elongated off-axis spots
+
+output:
+  log_dir: ./dimm_output

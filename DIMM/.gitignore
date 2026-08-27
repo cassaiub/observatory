@@ -1,0 +1,12 @@
+# Python build / cache artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Monitor runtime outputs
+dimm_output/
+dimm_watch/
+config.yaml
