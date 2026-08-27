@@ -98,6 +98,8 @@
     {\large \textbf{Part III:} Image Processing Pipeline Architecture (Phases 1--4) \par}
     \vspace{0.2in}
     {\large \textbf{Part IV:} Atmospheric Seeing Monitor (\texttt{cassa-dimm}) \par}
+    \vspace{0.2in}
+    {\large \textbf{Part V:} Sensor Characterization Pipeline (\texttt{cassa-camchar}) \par}
     \vfill
     \vspace{0.5in}
     {\normalsize \today\par}
@@ -265,6 +267,18 @@ Filter Trans. & \% & Monochromator, Sphere, Ref. Diode & External calibration lo
 \hline
 \end{tabularx}
 \end{center}
+
+\subsection{Automated Analysis (\texttt{cassa-camchar})}
+The frames and CSVs captured with the procedures above are reduced by the \texttt{cassa-camchar} package (documented in full in Part V). A few conventions of that analysis are worth noting here, as they affect how the raw data is turned into numbers:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Robust statistics:} every mean and variance is computed on a \emph{central region of interest} (to avoid vignetting and amp-glow in the corners) with \emph{sigma-clipping} (to reject hot and telegraph pixels), rather than over the raw full frame.
+    \item \textbf{PTC linear region:} the system gain is fit only where the mean signal is between 10\% and 70\% of its maximum, staying clear of the read-noise floor and the onset of saturation.
+    \item \textbf{Persisted results:} the measured parameters are written to \texttt{characterization\_results.csv} and \texttt{.json} (not only the dashboard image), and any curve without real lab data (e.g. QE) is tagged \texttt{synthetic} so it is never mistaken for a measurement.
+\end{itemize}
+Running the analysis is a single command once the frames are in place:
+\begin{lstlisting}[language=bash]
+cassa-camchar-analyze data --outdir camchar_output
+\end{lstlisting}
 
 \newpage
 
@@ -1218,5 +1232,130 @@ A fixed measurement window centred on a spot's mean position is dangerous: when 
 \begin{itemize}[leftmargin=*]
     \item \textbf{The Fix:} The engine centroids once to locate the spot, then re-extracts the window centred on that first estimate and centroids again. The spot is now centred in its own window regardless of where common motion carried it, so the full PSF is captured and the differential motion --- and hence the seeing --- is recovered without bias.
 \end{itemize}
+
+\newpage
+
+% =========================================================
+% PART V: SENSOR CHARACTERIZATION PIPELINE
+% =========================================================
+\part*{Part V: Sensor Characterization Pipeline}
+\addcontentsline{toc}{part}{Part V: Sensor Characterization Pipeline (cassa-camchar)}
+
+\section{Characterization Overview \& Deployment}
+The \texttt{cassa-camchar} package is the analysis counterpart to the capture procedures of Part I. From a directory of calibration frames it measures --- via the Photon Transfer Curve (PTC) method --- the system gain, read noise, full-well capacity, dynamic range, dark current (versus temperature), dark linearity (amp glow), quantum efficiency, and filter transmission, writing a machine-readable results table and a nine-panel dashboard.
+
+\subsection{Installation}
+Like the other pipelines it shares the Conda environment of Part II:
+\begin{lstlisting}[language=bash]
+conda activate pipeline_env
+cd camera_characterization
+pip install -e . --no-deps --no-build-isolation
+\end{lstlisting}
+This registers two commands:
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\textbf{Command} & \textbf{Role} \\
+\hline
+\texttt{cassa-camchar-analyze} & Characterize a data directory $\rightarrow$ results (CSV/JSON) + dashboard \\
+\hline
+\texttt{cassa-camchar-sim} & Generate a synthetic campaign with a known sensor model (testing) \\
+\hline
+\end{tabularx}
+\end{center}
+
+\subsection{Running the Analysis}
+The data directory holds the \texttt{bias/}, \texttt{flat/}, \texttt{dark/}, and \texttt{spectra/} sub-folders captured per Part I. Files are grouped by their FITS headers (\texttt{GAIN}, \texttt{EXPTIME}, \texttt{CCD-TEMP}), not by filename.
+\begin{lstlisting}[language=bash]
+cassa-camchar-analyze data --outdir camchar_output
+\end{lstlisting}
+The output directory receives:
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\textbf{File} & \textbf{Contents} \\
+\hline
+\texttt{characterization\_results.csv} & Per-gain table: system gain, read noise, full well, dynamic range \\
+\hline
+\texttt{characterization\_results.json} & Full results incl. dark current vs temperature, linearity, QE, filter metrics \\
+\hline
+\texttt{CASSA\_Sensor\_Characterization\_Report.png} & The nine-panel dashboard \\
+\hline
+\end{tabularx}
+\end{center}
+
+\begin{landscape}
+\section{Data Flow Architecture: Sensor Characterization}
+\vspace{1cm}
+
+\begin{center}
+\begin{tikzpicture}[node distance=0.65cm and 1.7cm]
+
+    \node (title) [font=\Large\bfseries\color{primary}] {Sensor Characterization Pipeline};
+
+    % Inputs
+    \node (bias) [raw, below=1cm of title, xshift=-11cm] {Bias Frames};
+    \node (flat) [raw, below=0.5cm of bias] {Flat Frames};
+    \node (dark) [raw, below=0.5cm of flat] {Dark Frames};
+    \node (spec) [raw, below=0.5cm of dark] {Spectra CSVs};
+
+    % Grouping + robust stats
+    \node (group) [process, right=1.7cm of flat, yshift=-0.5cm] {Header Grouping\\(GAIN / EXPTIME / TEMP)\\+ ROI \& Sigma-Clip Stats};
+
+    % Analyses
+    \node (ptc)   [process, right=2cm of group, yshift=2cm] {PTC Analysis:\\Gain, Read Noise,\\Full Well, Dyn.\ Range};
+    \node (darkA) [process, right=2cm of group] {Dark Analysis:\\Current vs Temp,\\Linearity (Amp Glow)};
+    \node (specA) [process, right=2cm of group, yshift=-2cm] {Spectral:\\QE + Filter\\Transmission};
+
+    % Outputs
+    \node (results) [final, right=2cm of darkA, yshift=1cm] {Results\\CSV / JSON};
+    \node (dash)    [final, right=2cm of darkA, yshift=-1cm] {9-Panel\\Dashboard};
+
+    % Arrows
+    \draw [arrow] (bias.east) -- (group.west);
+    \draw [arrow] (flat.east) -- (group.west);
+    \draw [arrow] (dark.east) -- (group.west);
+    \draw [arrow] (group.east) -- (ptc.west);
+    \draw [arrow] (group.east) -- (darkA.west);
+    \draw [arrow] (spec.east) -| (specA.south);
+    \draw [arrow] (ptc.east) -- (results.west);
+    \draw [arrow] (darkA.east) -- (results.west);
+    \draw [arrow] (specA.east) -- (results.west);
+    \draw [arrow] (ptc.east) -- (dash.west);
+    \draw [arrow] (darkA.east) -- (dash.west);
+    \draw [arrow] (specA.east) -- (dash.west);
+
+    \begin{scope}[on background layer]
+        \node [groupbox, fit=(title) (bias) (spec) (ptc) (specA) (results) (dash)] {};
+    \end{scope}
+
+\end{tikzpicture}
+\end{center}
+\end{landscape}
+\newpage
+
+\section{Characterization Engine}
+\textbf{Core Objective:} To turn the calibration frames into a defensible set of sensor parameters --- using robust statistics, persisting every measured number, and never fabricating data.
+
+\subsection{Robust Frame Statistics}
+The single most important refinement over a naive implementation is \emph{where} and \emph{how} the statistics are taken. Every mean and variance is computed on a \textbf{central region of interest} --- avoiding the vignetted, amp-glow-prone corners --- and with \textbf{sigma-clipping}, which removes hot and telegraph pixels that would otherwise inflate the variance and corrupt the gain. Frame pairs are \emph{differenced} before taking the variance, which cancels the fixed-pattern (flat-field) structure and isolates the temporal noise.
+
+\subsection{Photon Transfer Curve: Gain, Read Noise, Full Well, Dynamic Range}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{System Gain:} For each exposure the signal variance is $\sigma^2 = \mathrm{Var}(A-B)/2$ and the mean is $\mu = \tfrac{1}{2}(\bar A + \bar B)$. Across exposures $\sigma^2 = \mu/g + \mathrm{const}$, so the \textbf{gain} is the inverse slope, $g = 1/\text{slope}$, fit only over the linear region ($10\%$--$70\%$ of the maximum signal).
+    \item \textbf{Read Noise:} From a bias pair, $\mathrm{RN} = \big(\mathrm{std}(B_1-B_2)/\sqrt{2}\big)\times g$ electrons.
+    \item \textbf{Full Well:} the mean signal at the PTC \emph{variance turnover} (lightly smoothed for robustness), converted to electrons by $g$.
+    \item \textbf{Dynamic Range:} $\mathrm{DR} = \log_2(\mathrm{FWC}/\mathrm{RN})$ stops.
+\end{itemize}
+These are computed independently at each driver-gain setting to produce the gain-sweep curves.
+
+\subsection{Dark Current \& Linearity}
+Dark current is $I_D = (\bar I_{\mathrm{dark}} - \bar I_{\mathrm{bias}})\,g/t$ (e-/pixel/s), measured across the temperature sweep to reveal the expected exponential doubling. The dark-linearity check fits total thermal electrons versus exposure time at a fixed temperature and reports the \textbf{maximum deviation from linear} as a percentage --- a direct amp-glow indicator. If too few exposures are present the check is skipped and flagged; unlike the original script, no placeholder data is invented.
+
+\subsection{Spectral Response (QE \& Filters)}
+Quantum efficiency and filter transmission are read from the lab CSVs (a monochromator sweep) when present. Filter transmission is $T(\lambda) = I_{\mathrm{filtered}}/I_{\mathrm{unfiltered}}$, from which the central wavelength, peak, and FWHM are derived. When a curve has no lab data the pipeline substitutes a documented theoretical model but \textbf{tags it \texttt{synthetic}}, so a placeholder can never be mistaken for a measurement.
+
+\subsection{Outputs}
+All parameters are persisted to \texttt{characterization\_results.csv} (the per-gain headline table) and \texttt{characterization\_results.json} (the complete nested results, including the dark and spectral metrics and the \texttt{synthetic} tags), alongside the nine-panel dashboard. Every tunable --- the capture grid, the ROI fraction, the sigma-clip level, the PTC linear region, and the wavelength grid --- lives in the central configuration and can be overridden with a YAML file.
 
 \end{document}
