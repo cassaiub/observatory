@@ -10,3 +10,9 @@
 
 # DIMM
 /DIMM/dimm_simulated_cube.fits
+
+# Documentation LaTeX build artifacts
+/docs/*.aux
+/docs/*.log
+/docs/*.out
+/docs/*.toc
