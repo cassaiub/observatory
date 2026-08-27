@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cassa-camchar"
+version = "0.1.0"
+description = "CMOS sensor characterization (PTC gain/read-noise/full-well/dark/QE/filters) for the CASSA Observatory."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "CASSA Observatory" }]
+keywords = ["astronomy", "cmos", "sensor", "characterization", "photon transfer curve"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+
+dependencies = [
+    "numpy",
+    "scipy",
+    "astropy>=5.0",
+    "matplotlib",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
+
+[project.scripts]
+cassa-camchar-analyze = "cassa_camchar.cli:analyze"
+cassa-camchar-sim = "cassa_camchar.cli:simulate"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

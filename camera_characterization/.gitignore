@@ -1,0 +1,12 @@
+# Python build / cache artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Analysis outputs
+camchar_output/
+*_Report.png
+characterization_results.*
