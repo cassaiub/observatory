@@ -102,25 +102,47 @@ def test_diagnose_photometry(tmp_path):
 
 
 def test_full_report(tmp_path):
-    """Assemble a mini run dir and confirm the report + metrics are produced."""
+    """Assemble a mini work dir (phase1/phase2) and confirm the report is produced."""
+    img, _ = _star_image()
+    err = np.sqrt(np.clip(img, 0, None)).astype(np.float32)
+    p1_dir = tmp_path / "phase1"
+    p2_dir = tmp_path / "phase2"
+    p1_dir.mkdir()
+    p2_dir.mkdir()
+
+    fits.PrimaryHDU(img, fits.Header({"FILTER": "R", "OBJECT": "SYN"})).writeto(str(tmp_path / "raw_R.fits"))
+    write_mef(str(p1_dir / "calibrated_R.fits"), sci=img, err=err,
+              dq=build_dq(img.shape), header=fits.Header({"FILTER": "R", "BUNIT": "electron"}))
+    write_mef(str(p2_dir / "Master_R.fits"), sci=img, err=err,
+              dq=build_dq(img.shape), header=_make_wcs_header(img.shape))
+
+    metrics = pipeline.run(run_dir=str(p2_dir), raw=str(tmp_path / "raw_R.fits"),
+                           config=load_config())
+    diag = tmp_path / "phase4"  # sibling of phase2, written directly (no nested dir)
+    assert (diag / "diagnostics_report.pdf").exists()
+    assert (diag / "metrics.json").exists()
+    assert "stage_2_master" in metrics
+    # the calibrated frame is found in the sibling phase1 directory
+    assert metrics.get("stage_1_calibrated") is not None
+
+
+def test_full_report_legacy_layout(tmp_path):
+    """The older nested layout (calibrated frames in the run dir's parent) still resolves."""
     img, _ = _star_image()
     err = np.sqrt(np.clip(img, 0, None)).astype(np.float32)
     run_dir = tmp_path / "Run01"
     run_dir.mkdir()
-    cal_dir = tmp_path  # calibrated frames live in the parent of the run dir
 
     fits.PrimaryHDU(img, fits.Header({"FILTER": "R", "OBJECT": "SYN"})).writeto(str(tmp_path / "raw_R.fits"))
-    write_mef(str(cal_dir / "calibrated_R.fits"), sci=img, err=err,
+    write_mef(str(tmp_path / "calibrated_R.fits"), sci=img, err=err,
               dq=build_dq(img.shape), header=fits.Header({"FILTER": "R", "BUNIT": "electron"}))
     write_mef(str(run_dir / "Master_R.fits"), sci=img, err=err,
               dq=build_dq(img.shape), header=_make_wcs_header(img.shape))
 
     metrics = pipeline.run(run_dir=str(run_dir), raw=str(tmp_path / "raw_R.fits"),
-                           config=load_config())
-    diag = run_dir / "diagnostics"
-    assert (diag / "diagnostics_report.pdf").exists()
-    assert (diag / "metrics.json").exists()
-    assert "stage_2_master" in metrics
+                           outdir=str(run_dir / "diagnostics"), config=load_config())
+    assert (run_dir / "diagnostics" / "diagnostics_report.pdf").exists()
+    assert metrics.get("stage_1_calibrated") is not None
 
 
 def _logger():

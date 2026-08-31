@@ -4,6 +4,12 @@
 output drops extra extensions. So we solve on the SCI (primary) plane, then
 re-attach the ERR/DQ planes to the WCS-solved result, keeping the master a full
 SCI/ERR/DQ multi-extension file.
+
+The solve also yields an *astrometric* error: ``solve-field`` writes a ``.corr``
+table pairing each detected star with its index-catalog counterpart, and the
+scatter of those pairs is the residual of the fit. We record it as the standard
+FITS ``CRDER1``/``CRDER2`` keywords (random error per axis) so the WCS carries
+an uncertainty in the same spirit as the ERR plane.
 """
 
 import os
@@ -11,6 +17,7 @@ import shutil
 import tempfile
 import subprocess
 
+import numpy as np
 from astropy.io import fits
 
 from cassa_photometry.config import load_config
@@ -109,6 +116,7 @@ class WCSSolver:
                 solved_header = hdul[0].header.copy()
             self.global_anchor_ra = solved_header.get("CRVAL1")
             self.global_anchor_dec = solved_header.get("CRVAL2")
+            self._record_astrometric_error(filepath, solved_header)
             write_mef(filepath, sci=solved_data, err=err, dq=dq, header=solved_header,
                       history="PHASE 2: WCS solved via Astrometry.net")
             os.remove(output_fits)
@@ -122,6 +130,61 @@ class WCSSolver:
         if not keep_temps:
             self._clean_temps(filepath)
         return False
+
+    def _astrometric_residuals(self, base_filepath):
+        """Per-axis RMS of the star <-> index-catalog residuals, in arcsec.
+
+        ``solve-field`` writes the matched pairs to ``<base>.corr``. The scatter of
+        ``field`` (measured) against ``index`` (catalog) positions is how well the
+        WCS actually fits, as opposed to whether it merely converged.
+
+        Returns ``(rms_ra, rms_dec, n_stars)`` or ``None`` when the table is absent
+        or unusable.
+        """
+        corr_path = os.path.splitext(base_filepath)[0] + ".corr"
+        if not os.path.exists(corr_path):
+            return None
+        try:
+            corr = fits.getdata(corr_path)
+            field_ra = np.asarray(corr["field_ra"], dtype=float)
+            field_dec = np.asarray(corr["field_dec"], dtype=float)
+            index_ra = np.asarray(corr["index_ra"], dtype=float)
+            index_dec = np.asarray(corr["index_dec"], dtype=float)
+        except Exception as exc:
+            self.logger.warning(f"    [!] Could not read {os.path.basename(corr_path)}: {exc}")
+            return None
+
+        good = (np.isfinite(field_ra) & np.isfinite(field_dec)
+                & np.isfinite(index_ra) & np.isfinite(index_dec))
+        if int(good.sum()) < 2:
+            return None
+
+        # An RA offset spans less sky as you move off the equator, so de-project it.
+        cos_dec = np.cos(np.radians(index_dec[good]))
+        d_ra = (field_ra[good] - index_ra[good]) * cos_dec * 3600.0
+        d_dec = (field_dec[good] - index_dec[good]) * 3600.0
+        return (float(np.sqrt(np.mean(d_ra ** 2))),
+                float(np.sqrt(np.mean(d_dec ** 2))),
+                int(good.sum()))
+
+    def _record_astrometric_error(self, base_filepath, header):
+        """Stamp the astrometric RMS into the solved header (in place)."""
+        result = self._astrometric_residuals(base_filepath)
+        if result is None:
+            self.logger.warning("    [!] Solved, but no usable .corr table: "
+                                "astrometric RMS not recorded.")
+            return
+        rms_ra, rms_dec, n_stars = result
+        total = float(np.hypot(rms_ra, rms_dec))
+
+        # CRDERia is the FITS WCS keyword for the random error on axis i, expressed
+        # in the axis units (degrees here). ASTRMS/ASTNSTAR are for humans and QA.
+        header["CRDER1"] = (rms_ra / 3600.0, "[deg] RMS astrometric residual, axis 1")
+        header["CRDER2"] = (rms_dec / 3600.0, "[deg] RMS astrometric residual, axis 2")
+        header["ASTRMS"] = (total, "[arcsec] total RMS astrometric residual")
+        header["ASTNSTAR"] = (n_stars, "Stars matched against the astrometry index")
+        self.logger.info(f"    [+] Astrometric RMS: {rms_ra:.3f}\" RA, {rms_dec:.3f}\" Dec, "
+                         f"{total:.3f}\" total ({n_stars} stars)")
 
     def _log_solve_output(self, label, result):
         self.logger.error(f"        --- ASTROMETRY {label} SOLVE LOG ---")

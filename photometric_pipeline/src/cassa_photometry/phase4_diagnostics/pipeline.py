@@ -1,9 +1,11 @@
 """Phase 4 orchestrator: run stage diagnostics and assemble a report.
 
-Given a Phase 2 run directory (and optionally a raw frame/dir) it auto-discovers
-the products of each stage, runs the matching diagnostic, and writes a multi-page
-``diagnostics_report.pdf``, per-stage PNGs, a ``metrics.json`` and a
-pipeline-health summary. Stages whose products are absent are skipped cleanly.
+Given the Phase 2 directory (and optionally a raw frame/dir) it auto-discovers
+the products of each stage -- calibrated frames from the sibling ``phase1``
+directory, catalogs from ``phase3`` -- runs the matching diagnostic, and writes a
+multi-page ``diagnostics_report.pdf``, per-stage PNGs, a ``metrics.json`` and a
+pipeline-health summary into ``<work>/phase4``. Stages whose products are absent
+are skipped cleanly, and the older nested layout still resolves.
 """
 
 import os
@@ -14,6 +16,7 @@ import numpy as np
 
 from cassa_photometry.config import load_config
 from cassa_photometry.logging_utils import get_logger
+from cassa_photometry.paths import find_phase_dir, sibling_phase_dir
 from cassa_photometry.fits_utils import read_mef
 from cassa_photometry.phase4_diagnostics import stages
 from cassa_photometry.phase4_diagnostics.plots import Report
@@ -65,14 +68,35 @@ def _resolve(run_dir, raw, calibrated, master, catalog, fluxcal):
 
     if catalog is None and base and os.path.exists(base + "_catalog.csv"):
         catalog = base + "_catalog.csv"
-    if catalog is None and run_dir:
-        cands = sorted(glob.glob(os.path.join(run_dir, "*_catalog.csv")))
-        catalog = cands[0] if cands else None
-    if fluxcal is None and base and os.path.exists(base + "_fluxcal.fits"):
-        fluxcal = base + "_fluxcal.fits"
+    # Phase 3 products sit in the sibling phase3 directory (older runs kept them
+    # alongside the masters, so check both).
+    p3_dir = find_phase_dir(run_dir, 3) if run_dir else None
+    if catalog is None and base and p3_dir:
+        cand = os.path.join(p3_dir, os.path.basename(base) + "_catalog.csv")
+        catalog = cand if os.path.exists(cand) else None
+    if catalog is None and base and os.path.exists(base + "_catalog.csv"):
+        catalog = base + "_catalog.csv"
+    if catalog is None:
+        for d in (p3_dir, run_dir):
+            if not d:
+                continue
+            cands = sorted(glob.glob(os.path.join(d, "*_catalog.csv")))
+            if cands:
+                catalog = cands[0]
+                break
+    if fluxcal is None and base:
+        for cand in ([os.path.join(p3_dir, os.path.basename(base) + "_fluxcal.fits")] if p3_dir else []) \
+                    + [base + "_fluxcal.fits"]:
+            if os.path.exists(cand):
+                fluxcal = cand
+                break
 
     if calibrated is None:
-        cal_dir = os.path.dirname(run_dir) if run_dir else (os.path.dirname(master) if master else None)
+        # Calibrated frames live in the sibling phase1 directory; fall back to the
+        # parent directory for the older nested layout.
+        cal_dir = find_phase_dir(run_dir, 1) if run_dir else None
+        if cal_dir is None:
+            cal_dir = os.path.dirname(run_dir) if run_dir else (os.path.dirname(master) if master else None)
         if cal_dir:
             calibrated = _match_calibrated(cal_dir, filt)
 
@@ -100,8 +124,10 @@ def run(run_dir=None, raw=None, calibrated=None, master=None, catalog=None,
     logger = logger or get_logger("cassa_diagnose")
 
     r = _resolve(run_dir, raw, calibrated, master, catalog, fluxcal)
-    outdir = outdir or run_dir or (os.path.dirname(r["master"]) if r["master"] else ".")
-    diag_dir = os.path.join(outdir, "diagnostics")
+    if outdir is None:
+        anchor = run_dir or (os.path.dirname(r["master"]) if r["master"] else None)
+        outdir = sibling_phase_dir(anchor, 4) if anchor else "."
+    diag_dir = outdir
     os.makedirs(diag_dir, exist_ok=True)
     logger.info(f"Diagnostics -> {diag_dir} (filter '{r['filter'] or '?'}')")
 

@@ -36,14 +36,17 @@ def calibrate():
 def integrate():
     """Phase 2: alignment, stacking, and WCS astrometry."""
     p = argparse.ArgumentParser(prog="cassa-integrate", description="Phase 2: integration + WCS.")
-    p.add_argument("data_dir", help="Directory containing calibrated FITS frames.")
+    p.add_argument("data_dir", help="Directory containing calibrated FITS frames (phase1).")
+    p.add_argument("-o", "--output", default=None,
+                   help="Output directory (default: the phase2 directory beside the input).")
     p.add_argument("--keep-temps", action="store_true", help="Keep solve-field temporary files.")
     p.add_argument("-y", "--yes", action="store_true", help="Skip the interactive confirmation.")
     p.add_argument("-c", "--config", default=None, help="Optional YAML config file.")
     args = p.parse_args()
 
     from cassa_photometry.phase2_integration import run
-    run(args.data_dir, keep_temps=args.keep_temps, config=_config_from_args(args), assume_yes=args.yes)
+    run(args.data_dir, output_dir=args.output, keep_temps=args.keep_temps,
+        config=_config_from_args(args), assume_yes=args.yes)
 
 
 def photometry():
@@ -98,7 +101,8 @@ def run_all():
     """Run phases 1 -> 2 -> 3 end to end."""
     p = argparse.ArgumentParser(prog="cassa-run", description="Run phases 1-2-3 end to end.")
     p.add_argument("-i", "--input", required=True, help="Directory of raw FITS files.")
-    p.add_argument("-o", "--output", required=True, help="Directory for calibrated frames.")
+    p.add_argument("-o", "--output", required=True,
+                   help="Work directory; phases write to <output>/phase1, phase2, phase3.")
     p.add_argument("--filter", default="R", help="Fallback science band for phase 3. Default: R.")
     p.add_argument("--keep-temps", action="store_true", help="Keep solve-field temporary files.")
     p.add_argument("-c", "--config", default=None, help="Optional YAML config file.")
@@ -110,12 +114,15 @@ def run_all():
     from cassa_photometry.phase1_calibration import run as run_p1
     from cassa_photometry.phase2_integration.pipeline import IntegrationPipeline
     from cassa_photometry.phase3_photometry import run as run_p3
+    from cassa_photometry.paths import phase_dir
+
+    p1_dir = phase_dir(args.output, 1)
 
     logger.info("=== Phase 1: calibration ===")
-    run_p1(args.input, args.output, config=config, logger=logger)
+    run_p1(args.input, p1_dir, config=config, logger=logger)
 
     logger.info("=== Phase 2: integration ===")
-    pipeline = IntegrationPipeline(args.output, keep_temps=args.keep_temps, config=config)
+    pipeline = IntegrationPipeline(p1_dir, keep_temps=args.keep_temps, config=config)
     pipeline.setup()
     pipeline.execute()
 

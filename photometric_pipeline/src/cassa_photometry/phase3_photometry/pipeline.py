@@ -2,7 +2,8 @@
 
 For each master frame it detects the science band from the header, computes a
 filter-wise zero point (with uncertainty), writes a flux-calibrated image and an
-error-carrying source catalog.
+error-carrying source catalog. Products go to ``<work>/phase3`` by default, or to
+an explicit ``outdir``.
 """
 
 import os
@@ -11,6 +12,7 @@ from astropy.io import fits
 
 from cassa_photometry.config import load_config
 from cassa_photometry.logging_utils import get_logger
+from cassa_photometry.paths import sibling_phase_dir
 from cassa_photometry.instruments import ITelescopeNetworkProfile
 from cassa_photometry.phase3_photometry.engine import UniversalPhotometryEngine
 
@@ -57,11 +59,17 @@ def run(input_path, default_band="R", fwhm=None, threshold=None, outdir=None,
         logger.error("No master FITS files found to process.")
         return
 
+    # Phase 3 products go to <work>/phase3, beside the phase 2 stacks they came from.
+    if outdir is None:
+        anchor = input_path if os.path.isdir(input_path) else os.path.dirname(input_path)
+        outdir = sibling_phase_dir(anchor, 3)
+    os.makedirs(outdir, exist_ok=True)
+    logger.info(f"Phase 3 output -> {outdir}")
+
     logger.info(f"Phase 3: {len(files)} file(s) to process.")
     for i, path in enumerate(files, 1):
         base = os.path.basename(path).replace(".fits", "")
-        out_dir = outdir or os.path.dirname(path)
-        os.makedirs(out_dir, exist_ok=True)
+        out_dir = outdir
 
         band = detect_band(path, default_band)
         logger.info(f"[{i}/{len(files)}] {base} | band: {band}")

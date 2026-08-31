@@ -59,6 +59,13 @@ class Phase3Config:
     fwhm: float = 3.5
     detection_threshold: float = 5.0
     zp_match_tol_arcsec: float = 2.0
+    # Cross-match radius for the verification tool. When the WCS carries an
+    # astrometric RMS (ASTRMS, written by phase 2), the radius is derived from it
+    # as sigma * ASTRMS, clamped to the min/max below; otherwise
+    # ``zp_match_tol_arcsec`` above is used as a fixed fallback.
+    match_radius_sigma: float = 3.0
+    match_radius_min_arcsec: float = 1.0
+    match_radius_max_arcsec: float = 5.0
     aperture_r_factor: float = 2.0     # aperture radius = factor * FWHM
     annulus_in_factor: float = 3.0
     annulus_out_factor: float = 4.0

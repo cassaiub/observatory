@@ -18,6 +18,7 @@ import astroalign as aa
 
 from cassa_photometry.config import load_config
 from cassa_photometry.logging_utils import get_logger
+from cassa_photometry.paths import sibling_phase_dir
 from cassa_photometry.fits_utils import build_dq
 from cassa_photometry.phase2_integration.models import TargetGroup
 from cassa_photometry.phase2_integration.hardware import HardwareManager
@@ -37,8 +38,10 @@ def _variance_from(err, shape, fallback_noise):
 
 
 class IntegrationPipeline:
-    def __init__(self, input_dir, keep_temps=False, config=None, logger=None):
+    def __init__(self, input_dir, output_dir=None, keep_temps=False, config=None, logger=None):
         self.input_dir = input_dir
+        # Phase 2 writes to <work>/phase2 next to the phase 1 directory it reads.
+        self.output_dir = output_dir or sibling_phase_dir(input_dir, 2)
         self.keep_temps = keep_temps
         self.config = config or load_config()
         self.hw = HardwareManager()
@@ -52,7 +55,6 @@ class IntegrationPipeline:
         files = [f for f in glob.glob(os.path.join(self.input_dir, "*.fit*"))
                  if os.path.dirname(f) == self.input_dir]
         buckets = {}
-        t_set, f_set, s_set = set(), set(), set()
 
         print("\n[~] Skimming headers and file sizes...")
         total_size_mb = 0
@@ -67,9 +69,6 @@ class IntegrationPipeline:
 
             key = f"{meta['object']}_{meta['filter']}_{meta['hardware_id']}_{meta['exposure']}s"
             buckets.setdefault(key, TargetGroup(key, meta)).raw_files.append(f)
-            t_set.add(meta["object"])
-            f_set.add(meta["filter"])
-            s_set.add(meta["hardware_id"].split("_")[0])
 
             total_size_mb += os.path.getsize(f) / (1024 * 1024)
             valid_files += 1
@@ -81,16 +80,11 @@ class IntegrationPipeline:
         max_stack = max(len(g.raw_files) for g in self.target_groups)
         self.hw.print_estimations(valid_files, max_stack, total_size_mb)
 
-        base_name = f"{'-'.join(sorted(t_set))}_{'-'.join(sorted(f_set))}_{'-'.join(sorted(s_set))}"
-        count = 1
-        while True:
-            self.run_dir = os.path.join(self.input_dir, f"Run{count:02d}_{base_name}")
-            if not os.path.exists(self.run_dir):
-                os.makedirs(self.run_dir)
-                break
-            count += 1
+        self.run_dir = self.output_dir
+        os.makedirs(self.run_dir, exist_ok=True)
 
         self.logger = get_logger("cassa_integrate", run_dir=self.run_dir)
+        self.logger.info(f"Phase 2 output -> {self.run_dir}")
         self.logger.info("=" * 50)
         self.logger.info(f"PHASE 2: UNIFIED PIPELINE (Stacks + WCS + QA) - Cores: {cores}")
         self.logger.info("=" * 50)
@@ -231,13 +225,14 @@ class IntegrationPipeline:
         self.logger.info("   --------------------------------------\n")
 
 
-def run(input_dir, keep_temps=False, config=None, logger=None, assume_yes=False):
+def run(input_dir, output_dir=None, keep_temps=False, config=None, logger=None, assume_yes=False):
     """Set up and run phase 2 over a directory of calibrated frames."""
     input_dir = os.path.abspath(input_dir)
     if not os.path.exists(input_dir):
         raise SystemExit(f"Directory {input_dir} does not exist.")
 
-    pipeline = IntegrationPipeline(input_dir, keep_temps=keep_temps, config=config, logger=logger)
+    pipeline = IntegrationPipeline(input_dir, output_dir=output_dir, keep_temps=keep_temps,
+                                   config=config, logger=logger)
     pipeline.setup()
 
     if not assume_yes:

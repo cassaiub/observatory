@@ -161,6 +161,9 @@ def diagnose_master(path, config, logger, single_calibrated_path=None):
         has_wcs = False
     stackcnt = header.get("STACKCNT")
     master_noise = background_rms(sci, config.phase2.background_box)
+    # Phase 2 records the astrometric fit residual; absent on older masters.
+    astrom_rms = header.get("ASTRMS")
+    astrom_nstars = header.get("ASTNSTAR")
 
     snr_boost, expected = None, None
     if single_calibrated_path and os.path.exists(single_calibrated_path):
@@ -198,6 +201,8 @@ def diagnose_master(path, config, logger, single_calibrated_path=None):
         plots._text_only(ax[4], "No DQ plane", "DQ")
     plots.text_panel(ax[5], [
         f"WCS solved  : {'YES' if has_wcs else 'NO'}",
+        (f"astrom RMS  : {astrom_rms:.3f} \"  ({astrom_nstars} stars)"
+         if astrom_rms is not None else "astrom RMS  : n/a"),
         f"field centre: {center}",
         f"pixscale    : {pixscale:.3f} \"/px" if pixscale else "pixscale    : n/a",
         f"stack count : {stackcnt or '?'}",
@@ -210,6 +215,7 @@ def diagnose_master(path, config, logger, single_calibrated_path=None):
     ], "Metrics")
 
     metrics = {"wcs_solved": has_wcs, "field_center": center, "pixscale": pixscale,
+               "astrometric_rms_arcsec": astrom_rms, "astrometry_nstars": astrom_nstars,
                "stack_count": stackcnt, "master_noise": master_noise,
                "snr_boost": snr_boost, "expected_boost": expected,
                "fwhm_px": fw["fwhm_px"], "fwhm_arcsec": fw["fwhm_arcsec"]}

@@ -1,8 +1,10 @@
 """Phase 1 orchestrator: build master calibrations and reduce science frames.
 
-Produces multi-extension ``calibrated_*.fits`` files (SCI/ERR/DQ, electrons).
-Master frames are built *with* uncertainty (the standard error of the robust
-combine) so the science error budget includes the calibration noise.
+Produces multi-extension ``calibrated_*.fits`` files (SCI/ERR/DQ, electrons) in
+the output directory, conventionally ``<work>/phase1``. Master frames are built
+*with* uncertainty (the standard error of the robust combine) so the science
+error budget includes the calibration noise. The masters themselves are used and
+discarded -- only the calibrated science frames are written.
 """
 
 import os

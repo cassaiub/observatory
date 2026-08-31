@@ -11,8 +11,31 @@ htmlcov/
 # Large Astrometry.net index files (download separately; point to via config)
 astrometry_data/
 
-# Pipeline run outputs
+# Workshop dataset (distributed separately -- see workshop/README.md)
+workshop/raw/
+
+# Pipeline run outputs: one directory per phase under a work directory
+work/
+phase1/
+phase2/
+phase3/
+phase4/
 Run[0-9]*/
 *_fluxcal.fits
 *_segmap.fits
 *_catalog.csv
+calibrated_*.fits
+Master_*.fits
+
+# Notebook / LaTeX build artifacts
+.ipynb_checkpoints/
+*.aux
+*.log
+*.out
+*.fdb_latexmk
+*.fls
+*.nav
+*.snm
+*.toc
+*.vrb
+*.synctex.gz
