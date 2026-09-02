@@ -26,11 +26,34 @@ class Phase1Config:
     cr_sigclip: float = 4.5
     cr_sigfrac: float = 0.3
     cr_objlim: float = 5.0
-    # Saturation threshold in raw ADU used to flag the DQ SATURATED bit.
+    # Saturation threshold in raw ADU used to flag the DQ SATURATED bit. Only a
+    # fallback: a profile that knows its detector's full well (from the header or
+    # its hardware table) overrides this via InstrumentProfile.get_saturation.
     saturation_adu: float = 50000.0
-    # Bad-pixel mask thresholds, as fractions of the normalised master flat (=1.0).
+    # Last-resort detector constants, used only when neither the header nor the
+    # instrument profile can supply them. Reaching these means the error budget
+    # is built on an assumption, so phase 1 logs a warning naming the frame.
+    fallback_gain: float = 1.0
+    fallback_read_noise: float = 10.0
+    # Reduce frames that report having been calibrated already (a non-empty
+    # CALSTAT, or data in electrons). Off by default: calibrating a reduced
+    # frame a second time is silently wrong rather than loud.
+    allow_precalibrated: bool = False
+    # --- Bad-pixel mask -------------------------------------------------------
+    # Each test is relative to its own master's median, so the defaults carry
+    # across detectors without retuning. Set a factor to 0 to disable that test.
+    # Sensitivity defects, as fractions of the normalised master flat (=1.0).
     bpm_flat_low: float = 0.5
     bpm_flat_high: float = 1.5
+    # Hot pixels: dark current above this multiple of the median dark rate...
+    bpm_dark_rate_factor: float = 20.0
+    # ...or this many robust sigmas above it, whichever cut is higher. The sigma
+    # term is what stops a near-zero median from flagging the whole frame.
+    bpm_dark_sigma: float = 5.0
+    # Unstable pixels: bias frame-to-frame scatter above this multiple of the
+    # median scatter, or this many robust sigmas above it, whichever is higher.
+    bpm_bias_noise_factor: float = 5.0
+    bpm_bias_noise_sigma: float = 5.0
 
 
 @dataclass
@@ -86,6 +109,9 @@ class PipelineConfig:
     phase1: Phase1Config = field(default_factory=Phase1Config)
     phase2: Phase2Config = field(default_factory=Phase2Config)
     phase3: Phase3Config = field(default_factory=Phase3Config)
+    #: Instrument-profile name; see ``cassa_photometry.instruments.registry``.
+    #: A ``--instrument`` flag on any command overrides this.
+    instrument: str = "generic"
     log_level: str = "INFO"
 
     def resolve_astrometry_index_dir(self):

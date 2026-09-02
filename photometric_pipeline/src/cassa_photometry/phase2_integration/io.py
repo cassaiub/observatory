@@ -8,25 +8,26 @@ import numpy as np
 from astropy.io import fits
 
 from cassa_photometry.fits_utils import write_mef, read_mef
-from cassa_photometry.instruments import ITelescopeNetworkProfile
-
-# One shared instrument profile so filter naming matches the rest of the pipeline.
-_INSTRUMENT = ITelescopeNetworkProfile()
+from cassa_photometry.instruments import get_profile
 
 
 class FITSHandler:
     """Handles FITS reading, metadata extraction, and master saving."""
 
     @staticmethod
-    def extract_metadata(filepath):
-        """Return grouping/plate-scale metadata, or None if the file is unreadable."""
+    def extract_metadata(filepath, instrument=None):
+        """Return grouping/plate-scale metadata, or None if the file is unreadable.
+
+        ``instrument`` supplies the canonical filter label, shared with phases 1
+        and 3 so the three phases group frames identically.
+        """
+        instrument = instrument or get_profile()
         try:
             with fits.open(filepath) as hdul:
                 header = hdul[0].header
                 meta = {}
                 meta["object"] = header.get("OBJECT", header.get("TARGET", "Unknown")).replace(" ", "").upper()
-                # Canonical filter label (shared with phases 1 & 3 via the instrument profile).
-                meta["filter"] = _INSTRUMENT.standardize_filter(header)
+                meta["filter"] = instrument.standardize_filter(header)
                 meta["hardware_id"] = header.get("INSTRUME", "Unknown_Cam").replace(" ", "")
                 raw_exp = float(header.get("EXPTIME", header.get("EXPOSURE", 0.0)))
                 meta["exposure"] = int(5 * round(raw_exp / 5))

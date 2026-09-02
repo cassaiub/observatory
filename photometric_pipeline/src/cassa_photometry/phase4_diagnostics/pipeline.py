@@ -18,14 +18,19 @@ from cassa_photometry.config import load_config
 from cassa_photometry.logging_utils import get_logger
 from cassa_photometry.paths import find_phase_dir, sibling_phase_dir
 from cassa_photometry.fits_utils import read_mef
+from cassa_photometry.instruments import get_profile
 from cassa_photometry.phase4_diagnostics import stages
 from cassa_photometry.phase4_diagnostics.plots import Report
 
 
-def _header_filter(path):
+def _header_filter(path, instrument):
+    """The frame's filter, named the way the profile names it everywhere else."""
     try:
         _, _, _, header = read_mef(path)
-        return str(header.get("FILTER", "")).strip().upper()
+        filt = instrument.get_filter(header)
+        # "" rather than the profile's "UNKNOWN" placeholder, so that a frame
+        # with no FILTER card matches anything instead of only other unknowns.
+        return "" if filt == "UNKNOWN" else filt
     except Exception:
         return ""
 
@@ -36,14 +41,20 @@ def _first_master(run_dir):
     return sorted(cands)[0] if cands else None
 
 
-def _match_calibrated(cal_dir, filt):
+def _match_calibrated(cal_dir, filt, instrument):
     for f in sorted(glob.glob(os.path.join(cal_dir, "calibrated_*.fits"))):
-        if not filt or _header_filter(f) == filt:
+        if not filt or _header_filter(f, instrument) == filt:
             return f
     return None
 
 
-def _match_raw(raw_path, filt):
+def _match_raw(raw_path, filt, instrument):
+    """First science frame in ``raw_path`` matching ``filt``.
+
+    Science-vs-calibration is the profile's call, not a hardcoded IMAGETYP list,
+    so a setup whose acquisition software labels frames differently still
+    resolves a stage-0 frame.
+    """
     if raw_path and os.path.isfile(raw_path):
         return raw_path
     if raw_path and os.path.isdir(raw_path):
@@ -52,18 +63,18 @@ def _match_raw(raw_path, filt):
                 _, _, _, header = read_mef(f)
             except Exception:
                 continue
-            if str(header.get("IMAGETYP", "")).lower() not in ("bias", "dark", "flat") \
-               and (not filt or str(header.get("FILTER", "")).strip().upper() == filt):
+            if instrument.get_image_type(header) == "science" \
+               and (not filt or instrument.get_filter(header) == filt):
                 return f
     return None
 
 
-def _resolve(run_dir, raw, calibrated, master, catalog, fluxcal):
+def _resolve(run_dir, raw, calibrated, master, catalog, fluxcal, instrument):
     """Resolve one coherent (raw -> calibrated -> master -> catalog) set."""
     if master is None and run_dir:
         master = _first_master(run_dir)
 
-    filt = _header_filter(master) if master else ""
+    filt = _header_filter(master, instrument) if master else ""
     base = master[:-5] if master else None  # strip .fits
 
     if catalog is None and base and os.path.exists(base + "_catalog.csv"):
@@ -98,9 +109,9 @@ def _resolve(run_dir, raw, calibrated, master, catalog, fluxcal):
         if cal_dir is None:
             cal_dir = os.path.dirname(run_dir) if run_dir else (os.path.dirname(master) if master else None)
         if cal_dir:
-            calibrated = _match_calibrated(cal_dir, filt)
+            calibrated = _match_calibrated(cal_dir, filt, instrument)
 
-    raw = _match_raw(raw, filt)
+    raw = _match_raw(raw, filt, instrument)
     return {"raw": raw, "calibrated": calibrated, "master": master,
             "catalog": catalog, "fluxcal": fluxcal, "filter": filt}
 
@@ -118,12 +129,13 @@ def _jsonify(obj):
 
 
 def run(run_dir=None, raw=None, calibrated=None, master=None, catalog=None,
-        fluxcal=None, outdir=None, config=None, logger=None):
+        fluxcal=None, outdir=None, config=None, logger=None, instrument=None):
     """Produce the pipeline diagnostics report. Returns the metrics dict."""
     config = config or load_config()
     logger = logger or get_logger("cassa_diagnose")
+    instrument = instrument or get_profile(config.instrument)
 
-    r = _resolve(run_dir, raw, calibrated, master, catalog, fluxcal)
+    r = _resolve(run_dir, raw, calibrated, master, catalog, fluxcal, instrument)
     if outdir is None:
         anchor = run_dir or (os.path.dirname(r["master"]) if r["master"] else None)
         outdir = sibling_phase_dir(anchor, 4) if anchor else "."

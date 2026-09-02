@@ -19,6 +19,7 @@ from astroquery.sdss import SDSS
 from astroquery.vizier import Vizier
 
 from cassa_photometry.config import load_config
+from cassa_photometry.instruments import get_profile
 from cassa_photometry.phase3_photometry import catalogs
 
 def companion_fits(csv_path):
@@ -63,26 +64,36 @@ def match_radius_arcsec(csv_path, config):
             "fixed phase3.zp_match_tol_arcsec -- no ASTRMS in the header")
 
 
-def detect_filter(csv_path, default_filter):
+#: Science band -> the reference-catalog column this tool compares against.
+_BAND_TO_COLUMN = {"R": "rmag", "I": "imag", "G": "gmag", "V": "Vmag", "B": "Bmag"}
+
+#: Bands the instrument profile does not carry, kept so z/y frames still verify.
+_EXTRA_FILTERS = {
+    "Z": "zmag", "Z-BAND": "zmag", "ZMAG": "zmag", "SDSS-Z": "zmag",
+    "Y": "ymag", "Y-BAND": "ymag", "YMAG": "ymag",
+}
+
+
+def detect_filter(csv_path, default_filter, instrument=None):
+    """Reference-catalog column for a catalog CSV, from its companion FITS.
+
+    Filter naming comes from the instrument profile, so this tool agrees with
+    phases 1-3 instead of keeping its own copy of the mapping. Falls back to
+    filename parsing when there is no companion FITS to read.
     """
-    Attempts to find the companion FITS file for the CSV, reads the exact FILTER 
-    from the FITS header, and maps it. Falls back to filename parsing if FITS is missing.
-    """
+    instrument = instrument or get_profile()
     for pf in companion_fits(csv_path):
         try:
             with fits.open(pf) as hdul:
                 header = hdul[0].header
-                filt = str(header.get('FILTER', '')).strip().upper()
-
-                if filt and filt != 'NONE':
-                    # Map standard observatory filters to Pan-STARRS/SDSS catalog bands
-                    if filt in ['R', 'R-BAND', 'RMAG', 'R_SDSS', 'SDSS-R']: return 'rmag'
-                    elif filt in ['I', 'I-BAND', 'IMAG', 'I_SDSS', 'SDSS-I']: return 'imag'
-                    elif filt in ['G', 'G-BAND', 'GMAG', 'G_SDSS', 'SDSS-G']: return 'gmag'
-                    elif filt in ['Z', 'Z-BAND', 'ZMAG', 'SDSS-Z']: return 'zmag'
-                    elif filt in ['Y', 'Y-BAND', 'YMAG']: return 'ymag'
-                    elif filt == 'V': return 'Vmag'
-                    elif filt == 'B': return 'Bmag'
+                raw = instrument.get_filter(header)
+                if not raw or raw in ("UNKNOWN", "NONE"):
+                    continue
+                if raw in _EXTRA_FILTERS:
+                    return _EXTRA_FILTERS[raw]
+                band = instrument.science_band(header, default=None)
+                if band in _BAND_TO_COLUMN:
+                    return _BAND_TO_COLUMN[band]
         except Exception:
             pass  # If FITS reading fails, silently fall back to filename checking
 
@@ -320,9 +331,10 @@ def verify_calibration(csv_path, filter_band="rmag", config=None):
     except Exception as e:
         print(f"[WARNING] APASS process failed: {e}")
 
-def run(input_path, default_filter="rmag", config=None):
+def run(input_path, default_filter="rmag", config=None, instrument=None):
     """Verify one ``_catalog.csv`` file or a directory of them."""
     config = config or load_config()
+    instrument = instrument or get_profile(config.instrument)
     input_path = os.path.abspath(input_path)
 
     if os.path.isdir(input_path):
@@ -347,7 +359,7 @@ def run(input_path, default_filter="rmag", config=None):
     print("=" * 54)
 
     for i, csv_file in enumerate(csv_files, 1):
-        target_filter = detect_filter(csv_file, default_filter)
+        target_filter = detect_filter(csv_file, default_filter, instrument)
         print(f"\n\n{'=' * 75}")
         print(f"[{i}/{len(csv_files)}] VERIFYING FILE")
         print(f"{'=' * 75}")

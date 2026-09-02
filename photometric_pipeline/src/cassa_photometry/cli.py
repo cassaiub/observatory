@@ -13,11 +13,26 @@ import argparse
 
 from cassa_photometry import __version__
 from cassa_photometry.config import load_config
+from cassa_photometry.instruments import available_profiles
 from cassa_photometry.logging_utils import get_logger
+
+_INSTRUMENT_HELP = (
+    "Instrument profile to reduce with. Overrides the config file. "
+    f"One of: {', '.join(available_profiles())}."
+)
+
+
+def _add_instrument_arg(parser):
+    parser.add_argument("--instrument", default=None, help=_INSTRUMENT_HELP)
 
 
 def _config_from_args(args):
-    return load_config(getattr(args, "config", None))
+    """Build the config, letting an explicit --instrument win over the YAML."""
+    config = load_config(getattr(args, "config", None))
+    instrument = getattr(args, "instrument", None)
+    if instrument:
+        config.instrument = instrument
+    return config
 
 
 def calibrate():
@@ -26,6 +41,7 @@ def calibrate():
     p.add_argument("-i", "--input", required=True, help="Directory of raw FITS files.")
     p.add_argument("-o", "--output", required=True, help="Directory for calibrated frames.")
     p.add_argument("-c", "--config", default=None, help="Optional YAML config file.")
+    _add_instrument_arg(p)
     p.add_argument("--version", action="version", version=f"cassa-photometry {__version__}")
     args = p.parse_args()
 
@@ -42,6 +58,7 @@ def integrate():
     p.add_argument("--keep-temps", action="store_true", help="Keep solve-field temporary files.")
     p.add_argument("-y", "--yes", action="store_true", help="Skip the interactive confirmation.")
     p.add_argument("-c", "--config", default=None, help="Optional YAML config file.")
+    _add_instrument_arg(p)
     args = p.parse_args()
 
     from cassa_photometry.phase2_integration import run
@@ -58,6 +75,7 @@ def photometry():
     p.add_argument("--threshold", type=float, default=None, help="Detection threshold in sigma.")
     p.add_argument("--outdir", default=None, help="Output directory (default: alongside inputs).")
     p.add_argument("-c", "--config", default=None, help="Optional YAML config file.")
+    _add_instrument_arg(p)
     args = p.parse_args()
 
     from cassa_photometry.phase3_photometry import run
@@ -71,6 +89,7 @@ def verify():
     p.add_argument("input_path", help="A _catalog.csv file or a directory of them.")
     p.add_argument("--filter", default="rmag", help="Fallback filter band. Default: rmag.")
     p.add_argument("-c", "--config", default=None, help="Optional YAML config file.")
+    _add_instrument_arg(p)
     args = p.parse_args()
 
     from cassa_photometry.phase3_photometry.verify import run as verify_run
@@ -89,6 +108,7 @@ def diagnose():
     p.add_argument("--fluxcal", default=None, help="A *_fluxcal.fits (for ZP header).")
     p.add_argument("--outdir", default=None, help="Output directory for the report.")
     p.add_argument("-c", "--config", default=None, help="Optional YAML config file.")
+    _add_instrument_arg(p)
     args = p.parse_args()
 
     from cassa_photometry.phase4_diagnostics import run as diag_run
@@ -106,6 +126,7 @@ def run_all():
     p.add_argument("--filter", default="R", help="Fallback science band for phase 3. Default: R.")
     p.add_argument("--keep-temps", action="store_true", help="Keep solve-field temporary files.")
     p.add_argument("-c", "--config", default=None, help="Optional YAML config file.")
+    _add_instrument_arg(p)
     args = p.parse_args()
 
     config = _config_from_args(args)

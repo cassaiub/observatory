@@ -131,8 +131,14 @@ class UniversalPhotometryEngine:
 
     # -- source catalog -------------------------------------------------------
     def generate_full_catalog(self, target_fits, output_csv, output_segmap=None):
-        """Detect sources and write a catalog with flux/magnitude uncertainties."""
-        self._require_zp()
+        """Detect sources and write a catalog with flux/magnitude uncertainties.
+
+        A zero point is *not* required. Without one -- a narrowband filter has no
+        broadband reference catalog to calibrate against -- detection, fluxes and
+        instrumental magnitudes are still valid and still written;
+        ``Absolute_Mag`` comes back NaN rather than carrying a fabricated
+        calibration.
+        """
         cfg = self.config.phase3
         box = self.config.phase2.background_box
         self.logger.info("Generating full object catalog and segmentation map...")
@@ -170,8 +176,14 @@ class UniversalPhotometryEngine:
         tbl, cat = tbl[valid], cat[valid]
         flux, flux_err = flux[valid], flux_err[valid]
 
-        mag = -2.5 * np.log10(flux) + self.zero_point
-        mag_err = np.sqrt((_POGSON * flux_err / flux) ** 2 + self.zero_point_err ** 2)
+        inst_mag = -2.5 * np.log10(flux)
+        inst_mag_err = _POGSON * flux_err / flux
+        if self.zero_point is None:
+            mag = np.full_like(inst_mag, np.nan)
+            mag_err = np.full_like(inst_mag, np.nan)
+        else:
+            mag = inst_mag + self.zero_point
+            mag_err = np.hypot(inst_mag_err, self.zero_point_err)
 
         out = Table()
         out["ID"] = tbl["label"]
@@ -181,6 +193,8 @@ class UniversalPhotometryEngine:
         out["Y_pix"] = tbl["ycentroid"]
         out["Instrumental_Flux"] = flux
         out["Flux_Error"] = flux_err
+        out["Instrumental_Mag"] = inst_mag
+        out["Instrumental_Mag_Error"] = inst_mag_err
         out["Absolute_Mag"] = mag
         out["Mag_Error"] = mag_err
         out["SNR"] = np.where(flux_err > 0, flux / flux_err, np.nan)
@@ -189,7 +203,9 @@ class UniversalPhotometryEngine:
         out["FLAGS"] = _segment_flags(segmap.data, np.asarray(tbl["label"]), dq)
 
         out.write(output_csv, format="csv", overwrite=True)
-        self.logger.info(f"Catalog saved to {output_csv} ({len(out)} sources).")
+        calibration = ("instrumental magnitudes only -- no zero point"
+                       if self.zero_point is None else "calibrated")
+        self.logger.info(f"Catalog saved to {output_csv} ({len(out)} sources, {calibration}).")
 
     def _require_zp(self):
         if self.zero_point is None:

@@ -20,6 +20,7 @@ from cassa_photometry.config import load_config
 from cassa_photometry.logging_utils import get_logger
 from cassa_photometry.paths import sibling_phase_dir
 from cassa_photometry.fits_utils import build_dq
+from cassa_photometry.instruments import get_profile
 from cassa_photometry.phase2_integration.models import TargetGroup
 from cassa_photometry.phase2_integration.hardware import HardwareManager
 from cassa_photometry.phase2_integration.io import FITSHandler
@@ -38,12 +39,14 @@ def _variance_from(err, shape, fallback_noise):
 
 
 class IntegrationPipeline:
-    def __init__(self, input_dir, output_dir=None, keep_temps=False, config=None, logger=None):
+    def __init__(self, input_dir, output_dir=None, keep_temps=False, config=None,
+                 logger=None, instrument=None):
         self.input_dir = input_dir
         # Phase 2 writes to <work>/phase2 next to the phase 1 directory it reads.
         self.output_dir = output_dir or sibling_phase_dir(input_dir, 2)
         self.keep_temps = keep_temps
         self.config = config or load_config()
+        self.instrument = instrument or get_profile(self.config.instrument)
         self.hw = HardwareManager()
         self.target_groups = []
         self.run_dir = None
@@ -63,7 +66,7 @@ class IntegrationPipeline:
         for f in files:
             if "Master_" in os.path.basename(f):
                 continue
-            meta = FITSHandler.extract_metadata(f)
+            meta = FITSHandler.extract_metadata(f, self.instrument)
             if not meta:
                 continue
 
@@ -87,6 +90,7 @@ class IntegrationPipeline:
         self.logger.info(f"Phase 2 output -> {self.run_dir}")
         self.logger.info("=" * 50)
         self.logger.info(f"PHASE 2: UNIFIED PIPELINE (Stacks + WCS + QA) - Cores: {cores}")
+        self.logger.info(f"Instrument profile: {self.instrument.name}")
         self.logger.info("=" * 50)
 
     def execute(self):
@@ -225,14 +229,15 @@ class IntegrationPipeline:
         self.logger.info("   --------------------------------------\n")
 
 
-def run(input_dir, output_dir=None, keep_temps=False, config=None, logger=None, assume_yes=False):
+def run(input_dir, output_dir=None, keep_temps=False, config=None, logger=None,
+        assume_yes=False, instrument=None):
     """Set up and run phase 2 over a directory of calibrated frames."""
     input_dir = os.path.abspath(input_dir)
     if not os.path.exists(input_dir):
         raise SystemExit(f"Directory {input_dir} does not exist.")
 
     pipeline = IntegrationPipeline(input_dir, output_dir=output_dir, keep_temps=keep_temps,
-                                   config=config, logger=logger)
+                                   config=config, logger=logger, instrument=instrument)
     pipeline.setup()
 
     if not assume_yes:

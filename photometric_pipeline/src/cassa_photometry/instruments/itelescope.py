@@ -1,89 +1,68 @@
 """iTelescope network instrument profile.
 
-Extracts detector metadata from iTelescope FITS headers, falling back to a small
-hardware database (gain / read noise / fringe susceptibility) when the headers
-are incomplete.
+The network's frames are ordinary single-chip FITS, so all of the header parsing
+comes from :class:`~cassa_photometry.instruments.base.InstrumentProfile`. What
+this profile adds is the knowledge a header cannot carry: per-telescope detector
+constants for frames that arrive without ``EGAIN``/``READNOIS``, which of the
+telescopes fringe, and the flat-reuse convention the network's calibration sets
+rely on.
 """
 from cassa_photometry.instruments.base import InstrumentProfile
 
+
 class ITelescopeNetworkProfile(InstrumentProfile):
+    """Profile for the iTelescope hosted network (T11, T24, T32, T68, ...)."""
+
+    #: Telescope id -> detector constants, used only when the header is silent.
+    HARDWARE = {
+        "T32": {"gain": 1.0, "read_noise": 9.0, "fringes": False},
+        "T24": {"gain": 1.4, "read_noise": 7.0, "fringes": False},
+        "T68": {"gain": 0.77, "read_noise": 1.5, "fringes": False},
+        "T11": {"gain": 1.3, "read_noise": 8.0, "fringes": True},
+        "DEFAULT": {"gain": 1.0, "read_noise": 10.0, "fringes": False},
+    }
+
+    #: Filters whose fringing matters on a fringe-susceptible detector.
+    FRINGE_FILTERS = ("z", "y", "ha", "sii", "luminance")
+
     def __init__(self):
-        # Fallback database in case headers are missing values.
-        self.hardware_database = {
-            'T32': {'gain': 1.0, 'read_noise': 9.0, 'fringes': False},
-            'T24': {'gain': 1.4, 'read_noise': 7.0, 'fringes': False},
-            'T68': {'gain': 0.77, 'read_noise': 1.5, 'fringes': False}, 
-            'T11': {'gain': 1.3, 'read_noise': 8.0, 'fringes': True},   
-            'DEFAULT': {'gain': 1.0, 'read_noise': 10.0, 'fringes': False}
-        }
+        # Kept as an instance attribute for backwards compatibility with code
+        # and tests that reach into the table directly.
+        self.hardware_database = dict(self.HARDWARE)
 
     @property
     def name(self):
         return "iTelescope Universal Network"
 
     def _get_telescope_id(self, header):
-        """Helper function to extract which iTelescope took the image."""
-        tel_string = header.get('TELESCOP', header.get('INSTRUME', 'UNKNOWN')).upper()
-        
-        for tel_id in self.hardware_database.keys():
+        """Which iTelescope took the image, as a key into the hardware table."""
+        tel_string = str(
+            header.get("TELESCOP", header.get("INSTRUME", "UNKNOWN"))
+        ).upper()
+        for tel_id in self.hardware_database:
             if tel_id in tel_string:
                 return tel_id
-        return 'DEFAULT'
+        return "DEFAULT"
 
-    def get_amplifiers(self, hdul):
-        return [hdul[0]]
-
-    def get_image_type(self, header):
-        img_type = header.get('IMAGETYP', '').lower()
-        if 'bias' in img_type: return 'bias'
-        if 'dark' in img_type: return 'dark'
-        if 'flat' in img_type: return 'flat'
-        return 'science'
-
-    def get_exposure(self, header):
-        return header.get('EXPTIME', 0.0)
+    def _hardware(self, header):
+        return self.hardware_database[self._get_telescope_id(header)]
 
     def get_gain(self, header):
-        # Safely attempt to extract gain
-        for key in ['EGAIN', 'GAIN', 'SYSGAIN']:
-            val = header.get(key)
-            if val is not None:
-                try:
-                    return float(val)
-                except ValueError:
-                    continue # If it's weird text, ignore and keep looking
-                    
-        tel_id = self._get_telescope_id(header)
-        return self.hardware_database[tel_id]['gain']
+        """Header gain if present, else the telescope's tabulated value."""
+        gain = super().get_gain(header)
+        return self._hardware(header)["gain"] if gain is None else gain
 
     def get_read_noise(self, header):
-        # Safely attempt to extract read noise
-        for key in ['READNOIS', 'RDNOISE', 'E-NOISE']:
-            val = header.get(key)
-            if val is not None:
-                try:
-                    return float(val)
-                except ValueError:
-                    continue # If it's a string like 'Mode0', ignore and keep looking
-                    
-        tel_id = self._get_telescope_id(header)
-        return self.hardware_database[tel_id]['read_noise']
+        """Header read noise if present, else the telescope's tabulated value."""
+        read_noise = super().get_read_noise(header)
+        return self._hardware(header)["read_noise"] if read_noise is None else read_noise
 
-    def get_overscan_region(self, header):
-        return None 
-        
     def needs_fringe_correction(self, header):
-        tel_id = self._get_telescope_id(header)
-        telescope_fringes = self.hardware_database[tel_id]['fringes']
-        
-        filter_name = header.get('FILTER', '').lower()
-        fringe_filters = ['z', 'y', 'ha', 'sii', 'luminance'] 
-        
-        if telescope_fringes and any(f in filter_name for f in fringe_filters):
-            return True
-            
-        return False
+        if not self._hardware(header)["fringes"]:
+            return False
+        filter_name = str(header.get("FILTER", "")).lower()
+        return any(f in filter_name for f in self.FRINGE_FILTERS)
 
-    def get_filter(self, header):
-        """Extracts the filter name and standardizes it."""
-        return header.get('FILTER', 'UNKNOWN').strip().upper()
+    def flat_proxies(self):
+        """The network's calibration sets ship luminance flats in place of red."""
+        return {"RED": "LUMINANCE"}
