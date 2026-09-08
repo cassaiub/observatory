@@ -19,19 +19,35 @@ DQ_SATURATED = 1      # pixel at/above the saturation level
 DQ_BAD_PIXEL = 2      # hot/dead pixel from the bad-pixel mask
 DQ_COSMIC_RAY = 4     # flagged by cosmic-ray rejection
 DQ_NO_DATA = 8        # NaN / no coverage (e.g. outside the warp footprint)
+DQ_REJECTED = 16      # some contributing frames were rejected here (stacks only)
 
 DQ_FLAG_NAMES = {
     DQ_SATURATED: "SATURATED",
     DQ_BAD_PIXEL: "BAD_PIXEL",
     DQ_COSMIC_RAY: "COSMIC_RAY",
     DQ_NO_DATA: "NO_DATA",
+    DQ_REJECTED: "REJECTED",
 }
 
 ERR_EXTNAME = "ERR"
 DQ_EXTNAME = "DQ"
 
+# --- Calibration vintage ------------------------------------------------------
+# Stamped as CALVERS on every product the pipeline writes. Bump it whenever a
+# change makes new output numerically incomparable with old output, so a file
+# states its own calibration vintage and mixed vintages are detectable rather
+# than silently averaged together. Vintage 1 is anything written before this
+# card existed (no CALVERS => 1).
+#
+#   1  original release
+#   2  scientific hardening: DQ propagated through stacking, aperture-corrected
+#      total-flux zero point, per-band photometric system, exposure
+#      normalisation. See docs/CHANGELOG.md and docs/master-plan.md.
+CALVERS = 2
 
-def build_dq(shape, saturated=None, bad_pixel=None, cosmic_ray=None, no_data=None):
+
+def build_dq(shape, saturated=None, bad_pixel=None, cosmic_ray=None, no_data=None,
+             rejected=None):
     """Combine boolean masks into a single integer DQ bitmask array."""
     dq = np.zeros(shape, dtype=np.int32)
     for mask, flag in (
@@ -39,6 +55,7 @@ def build_dq(shape, saturated=None, bad_pixel=None, cosmic_ray=None, no_data=Non
         (bad_pixel, DQ_BAD_PIXEL),
         (cosmic_ray, DQ_COSMIC_RAY),
         (no_data, DQ_NO_DATA),
+        (rejected, DQ_REJECTED),
     ):
         if mask is not None:
             dq[np.asarray(mask, dtype=bool)] |= flag

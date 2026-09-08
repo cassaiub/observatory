@@ -2,7 +2,11 @@ import numpy as np
 from astropy.io import fits
 
 from cassa_photometry.fits_utils import (
-    write_mef, read_mef, build_dq, DQ_SATURATED, DQ_COSMIC_RAY,
+    DQ_COSMIC_RAY,
+    DQ_SATURATED,
+    build_dq,
+    read_mef,
+    write_mef,
 )
 
 

@@ -8,11 +8,14 @@ reference band -- or to none at all, when no reference catalog describes it.
 
 import pytest
 from astropy.io import fits
+from conftest import FixtureProfile
 
 from cassa_photometry.config import load_config
 from cassa_photometry.instruments import (
-    Cassa8InchProfile, InstrumentProfile, ITelescopeNetworkProfile,
-    available_profiles, get_profile,
+    Cassa8InchProfile,
+    InstrumentProfile,
+    available_profiles,
+    get_profile,
 )
 
 
@@ -24,8 +27,12 @@ def _header(**cards):
 
 def test_registry_returns_the_named_profile():
     assert isinstance(get_profile("generic"), InstrumentProfile)
-    assert isinstance(get_profile("itelescope"), ITelescopeNetworkProfile)
     assert isinstance(get_profile("cassa8"), Cassa8InchProfile)
+
+
+def test_registry_ships_only_setups_this_observatory_operates():
+    """Adding a telescope must not mean adding a line to this package."""
+    assert available_profiles() == ["cassa8", "generic"]
 
 
 def test_registry_defaults_to_generic():
@@ -56,7 +63,7 @@ def test_config_yaml_selects_a_profile(tmp_path):
 
 # --- The header outranks the profile ------------------------------------------
 
-@pytest.mark.parametrize("name", ["generic", "itelescope", "cassa8"])
+@pytest.mark.parametrize("name", ["generic", "cassa8"])
 def test_header_wins_over_profile_knowledge(name):
     """A frame that states its own detector constants is believed, always."""
     header = _header(EGAIN=1.37, READNOIS=9.2, GAIN=100, SATURATE=61000)
@@ -80,12 +87,13 @@ def test_unparseable_values_are_skipped_not_raised():
     assert profile.get_read_noise(_header(READNOIS="Mode0", RDNOISE=3.1)) == pytest.approx(3.1)
 
 
-def test_itelescope_falls_back_to_its_hardware_table():
-    profile = get_profile("itelescope")
-    assert profile.get_gain(_header(TELESCOP="T24")) == pytest.approx(1.4)
-    assert profile.get_read_noise(_header(TELESCOP="T24")) == pytest.approx(7.0)
-    # An unrecognised telescope still gets the network default, not None.
-    assert profile.get_gain(_header(TELESCOP="T99")) == pytest.approx(1.0)
+def test_a_profile_may_answer_where_the_generic_one_cannot():
+    """The reason profiles exist: supplying what the header does not carry."""
+    profile = FixtureProfile()
+    assert profile.get_gain(_header()) == pytest.approx(1.0)
+    assert profile.get_read_noise(_header()) == pytest.approx(10.0)
+    # ...and it still yields to a header that states its own constants.
+    assert profile.get_gain(_header(EGAIN=0.8)) == pytest.approx(0.8)
 
 
 # --- CASSA 8-inch: gain-keyed CMOS detector curve -----------------------------
@@ -276,6 +284,10 @@ def test_image_type_classification(raw, expected):
 # --- Calibration conventions --------------------------------------------------
 
 def test_flat_proxies_are_declared_by_the_profile_not_the_pipeline():
-    assert get_profile("itelescope").flat_proxies() == {"RED": "LUMINANCE"}
     assert get_profile("generic").flat_proxies() == {}
     assert get_profile("cassa8").flat_proxies() == {}
+    # ...and a setup that does reuse one filter's flat declares it, rather than
+    # the pipeline hardcoding any one observatory's habit.
+    config = load_config()
+    config.detector.flat_proxies = {"Red": "Luminance"}
+    assert get_profile("generic", config=config).flat_proxies() == {"RED": "LUMINANCE"}

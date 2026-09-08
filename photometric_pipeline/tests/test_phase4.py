@@ -1,11 +1,11 @@
 import numpy as np
 from astropy.io import fits
-from astropy.wcs import WCS
 from astropy.table import Table
+from astropy.wcs import WCS
 
 from cassa_photometry.config import load_config
-from cassa_photometry.fits_utils import write_mef, build_dq
-from cassa_photometry.phase4_diagnostics import psf, stages, pipeline
+from cassa_photometry.fits_utils import build_dq, write_mef
+from cassa_photometry.phase4_diagnostics import pipeline, psf, stages
 
 _FWHM = 4.0
 _SIGMA = _FWHM / 2.3548200450309493
@@ -53,7 +53,9 @@ def test_estimate_fwhm_recovers_known():
 def test_diagnose_raw(tmp_path):
     img, _ = _star_image()
     path = tmp_path / "raw.fits"
-    h = fits.Header(); h["OBJECT"] = "SYN"; h["FILTER"] = "R"
+    h = fits.Header()
+    h["OBJECT"] = "SYN"
+    h["FILTER"] = "R"
     fits.PrimaryHDU(img, h).writeto(str(path))
     metrics, figs = stages.diagnose_raw(str(path), load_config(), _logger())
     assert np.isfinite(metrics["fwhm_px"]) and len(figs) == 1
@@ -64,7 +66,9 @@ def test_diagnose_calibrated(tmp_path):
     err = np.sqrt(np.clip(img, 0, None)).astype(np.float32)
     dq = build_dq(img.shape, saturated=(img > img.max() * 0.99))
     path = tmp_path / "calibrated_syn.fits"
-    h = fits.Header(); h["FILTER"] = "R"; h["BUNIT"] = "electron"
+    h = fits.Header()
+    h["FILTER"] = "R"
+    h["BUNIT"] = "electron"
     write_mef(str(path), sci=img, err=err, dq=dq, header=h)
     metrics, figs = stages.diagnose_calibrated(str(path), load_config(), _logger())
     assert "median_err" in metrics and len(figs) == 1
@@ -86,14 +90,14 @@ def test_diagnose_photometry(tmp_path):
     mag = rng.uniform(12, 21, n)
     magerr = 0.01 * 10 ** (0.4 * (mag - 15))
     tbl = Table({
-        "ID": np.arange(n), "RA_deg": rng.uniform(339, 339.1, n),
-        "Dec_deg": rng.uniform(34.3, 34.5, n),
-        "X_pix": rng.uniform(0, 1024, n), "Y_pix": rng.uniform(0, 1024, n),
-        "Instrumental_Flux": 10 ** (-0.4 * (mag - 25)),
-        "Flux_Error": rng.uniform(1, 50, n),
-        "Absolute_Mag": mag, "Mag_Error": magerr,
-        "SNR": 1.0857 / magerr, "Area_pixels": rng.uniform(5, 200, n),
-        "Ellipticity": rng.uniform(0, 0.4, n), "FLAGS": np.zeros(n, int),
+        "NUMBER": np.arange(n), "ALPHA_J2000": rng.uniform(339, 339.1, n),
+        "DELTA_J2000": rng.uniform(34.3, 34.5, n),
+        "X_IMAGE": rng.uniform(0, 1024, n), "Y_IMAGE": rng.uniform(0, 1024, n),
+        "FLUX_ISO": 10 ** (-0.4 * (mag - 25)),
+        "FLUXERR_ISO": rng.uniform(1, 50, n),
+        "MAG_ISO": mag, "MAGERR_ISO": magerr,
+        "SNR": 1.0857 / magerr, "ISOAREA_IMAGE": rng.uniform(5, 200, n),
+        "ELLIPTICITY": rng.uniform(0, 0.4, n), "FLAGS": np.zeros(n, int),
     })
     cat = tmp_path / "syn_catalog.csv"
     tbl.write(str(cat), format="csv", overwrite=True)

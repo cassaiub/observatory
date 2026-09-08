@@ -8,16 +8,22 @@ or too-few stars degrade gracefully rather than raising.
 import os
 
 import numpy as np
-from astropy.wcs import WCS
 from astropy.table import Table
+from astropy.wcs import WCS
 
 from cassa_photometry.fits_utils import (
-    read_mef, DQ_SATURATED, DQ_BAD_PIXEL, DQ_COSMIC_RAY, DQ_NO_DATA,
+    DQ_BAD_PIXEL,
+    DQ_COSMIC_RAY,
+    DQ_NO_DATA,
+    DQ_SATURATED,
+    read_mef,
 )
 from cassa_photometry.phase2_integration.math_utils import MathEngine
 from cassa_photometry.phase4_diagnostics import plots
 from cassa_photometry.phase4_diagnostics.psf import (
-    estimate_fwhm, image_stats, background_rms,
+    background_rms,
+    estimate_fwhm,
+    image_stats,
 )
 
 _DQ_BITS = [
@@ -62,7 +68,7 @@ def diagnose_raw(path, config, logger):
     hot = (sci >= 0.95 * stats["max"]).astype(float)
 
     fig, ax = plots.new_page(2, 3, f"Stage 0 - Raw: {os.path.basename(path)}")
-    im = plots.zscale_panel(ax[0], sci, "Raw image + detected stars")
+    plots.zscale_panel(ax[0], sci, "Raw image + detected stars")
     plots.overlay_positions(ax[0], fw["positions"])
     plots.histogram_panel(ax[1], sci, "Pixel histogram")
     plots.radial_profile_panel(ax[2], fw["radii"], fw["profile"], fw["fwhm_px"], "Stacked PSF profile")
@@ -151,7 +157,6 @@ def diagnose_master(path, config, logger, single_calibrated_path=None):
     sci, err, dq, header = read_mef(path)
     cfg = config.phase3
     pixscale = _pixscale_from_header(header)
-    stats = image_stats(sci)
     fw = estimate_fwhm(sci, cfg.fwhm, cfg.detection_threshold, pixscale)
 
     try:
@@ -235,8 +240,8 @@ def diagnose_photometry(catalog_csv, config, logger, fluxcal_fits=None):
         zperr = header.get("MAGZERR")
         nzp = header.get("NZPSTARS")
 
-    mag = np.asarray(cat["Absolute_Mag"], float)
-    magerr = np.asarray(cat["Mag_Error"], float) if "Mag_Error" in cat.colnames else np.full_like(mag, np.nan)
+    mag = np.asarray(cat["MAG_ISO"], float)
+    magerr = np.asarray(cat["MAGERR_ISO"], float) if "MAGERR_ISO" in cat.colnames else np.full_like(mag, np.nan)
     snr = np.asarray(cat["SNR"], float) if "SNR" in cat.colnames else np.full_like(mag, np.nan)
     good = np.isfinite(mag)
 
@@ -254,13 +259,13 @@ def diagnose_photometry(catalog_csv, config, logger, fluxcal_fits=None):
     ax[2].set_title("Number counts", fontsize=10)
     ax[2].set_xlabel("Magnitude")
     ax[2].set_ylabel("N")
-    if "X_pix" in cat.colnames:
-        sc = plots.scatter_panel(ax[3], cat["X_pix"][good], cat["Y_pix"][good],
+    if "X_IMAGE" in cat.colnames:
+        sc = plots.scatter_panel(ax[3], cat["X_IMAGE"][good], cat["Y_IMAGE"][good],
                                  "X (px)", "Y (px)", "Source map (colour=mag)", c=mag[good])
         fig.colorbar(sc, ax=ax[3], fraction=0.046)
-    if "Ellipticity" in cat.colnames:
-        plots.scatter_panel(ax[4], mag[good], np.asarray(cat["Ellipticity"], float)[good],
-                            "Magnitude", "Ellipticity", "Shape vs mag")
+    if "ELLIPTICITY" in cat.colnames:
+        plots.scatter_panel(ax[4], mag[good], np.asarray(cat["ELLIPTICITY"], float)[good],
+                            "Magnitude", "ELLIPTICITY", "Shape vs mag")
         ax[4].axhline(cfg.ellipticity_star_max, color="green", ls="--", lw=0.8)
     plots.text_panel(ax[5], [
         f"N sources   : {int(np.sum(good))}",

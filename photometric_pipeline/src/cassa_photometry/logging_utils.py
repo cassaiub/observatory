@@ -13,8 +13,37 @@ import sys
 _CONSOLE_FMT = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S")
 _FILE_FMT = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
+#: Level applied when a caller does not name one. ``load_config`` sets this from
+#: ``PipelineConfig.log_level``, which is how a YAML file's ``log_level: DEBUG``
+#: reaches the many ``get_logger`` calls that pass no level of their own.
+_DEFAULT_LEVEL = logging.INFO
 
-def get_logger(name="cassa_photometry", run_dir=None, level=logging.INFO):
+
+def set_default_level(level):
+    """Set the level used by :func:`get_logger` when none is given.
+
+    Accepts a level name (``"DEBUG"``) or a numeric level. An unrecognised name
+    is ignored with a warning rather than raised: a typo in a log setting must
+    not stop a reduction.
+    """
+    global _DEFAULT_LEVEL
+    if isinstance(level, str):
+        resolved = logging.getLevelName(level.strip().upper())
+        if not isinstance(resolved, int):
+            logging.getLogger(__name__).warning(
+                "Unknown log_level %r; keeping %s.", level, logging.getLevelName(_DEFAULT_LEVEL)
+            )
+            return _DEFAULT_LEVEL
+        level = resolved
+    _DEFAULT_LEVEL = int(level)
+    # Existing loggers were built before the config was read; move them too.
+    for name in list(logging.root.manager.loggerDict):
+        if name.startswith("cassa"):
+            logging.getLogger(name).setLevel(_DEFAULT_LEVEL)
+    return _DEFAULT_LEVEL
+
+
+def get_logger(name="cassa_photometry", run_dir=None, level=None):
     """Return a configured logger.
 
     Parameters
@@ -24,8 +53,9 @@ def get_logger(name="cassa_photometry", run_dir=None, level=logging.INFO):
     run_dir : str, optional
         If given, a ``<name>.log`` file handler is attached inside this
         directory in addition to the console handler.
-    level : int
-        Logging level (default :data:`logging.INFO`).
+    level : int, optional
+        Logging level. Defaults to whatever :func:`set_default_level` was last
+        given, which ``load_config`` sets from ``PipelineConfig.log_level``.
 
     Notes
     -----
@@ -33,7 +63,7 @@ def get_logger(name="cassa_photometry", run_dir=None, level=logging.INFO):
     will not stack duplicate handlers.
     """
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+    logger.setLevel(_DEFAULT_LEVEL if level is None else level)
     logger.propagate = False
 
     if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)

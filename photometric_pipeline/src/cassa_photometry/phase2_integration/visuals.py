@@ -3,16 +3,87 @@
 import os
 import warnings
 
-import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
+import numpy as np
 from astropy.io import fits
 from astropy.visualization import ZScaleInterval
+from matplotlib.backends.backend_pdf import PdfPages
 
 from cassa_photometry.config import load_config
+from cassa_photometry.paths import find_raw_frames
 from cassa_photometry.phase2_integration.math_utils import MathEngine
 
-warnings.filterwarnings("ignore")
+# Scoped, not global. A module-level filterwarnings("ignore") silences warnings
+# for the whole *process* -- including astropy's WCS and FITS-verification
+# warnings, which are exactly the ones a reduction wants to see.
+warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="numpy")
+
+
+def _raw_candidates(anchor_path, calibrated_filename, header, configured_dir):
+    """Yield ``(filename, directory)`` pairs to try, best provenance first.
+
+    The raw tree is a CLI argument and routinely sits outside the work
+    directory, so guessing a sibling of the calibrated directory only works for
+    one particular layout. Phase 1 stamps ``RAWFILE``/``RAWDIR`` into every
+    calibrated header precisely so this does not have to be guessed; the
+    directory guesses below are the fallback for frames calibrated before those
+    cards existed, or for a raw tree that has since moved.
+    """
+    stamped = header.get("RAWFILE")
+    name = str(stamped).strip() if stamped else calibrated_filename.replace("calibrated_", "", 1)
+
+    calibrated_dir = os.path.dirname(os.path.abspath(anchor_path))
+    work_dir = os.path.dirname(calibrated_dir)
+
+    dirs = []
+    if configured_dir:
+        dirs.append(os.path.abspath(os.path.expanduser(configured_dir)))
+    stamped_dir = header.get("RAWDIR")
+    if stamped_dir:
+        dirs.append(str(stamped_dir).strip())
+    # Conventional layouts, in decreasing confidence. Both cases of "raw" are
+    # tried because the directory name comes from the user, not the pipeline.
+    for base in (work_dir, os.path.dirname(work_dir)):
+        for leaf in ("Raw", "raw", "RAW"):
+            dirs.append(os.path.join(base, leaf))
+
+    seen = set()
+    for directory in dirs:
+        if directory and directory not in seen:
+            seen.add(directory)
+            yield name, directory
+
+
+def find_raw_frame(anchor_path, calibrated_filename, header, configured_dir=None):
+    """Locate the raw frame behind a calibrated one, or ``(None, searched)``.
+
+    Each candidate directory is tried as the frame's own directory first and
+    then as the root of a tree, because the acquisition software files a night
+    under ``<date>/<TYPE>/<target>`` and a raw argument naming the night's root
+    is the normal case rather than the exception.
+    """
+    searched = []
+    for name, directory in _raw_candidates(anchor_path, calibrated_filename,
+                                           header, configured_dir):
+        candidate = os.path.join(directory, name)
+        if os.path.exists(candidate):
+            return candidate, searched
+        nested = _find_below(directory, name)
+        if nested:
+            return nested, searched
+        searched.append(directory)
+    return None, searched
+
+
+def _find_below(directory, name):
+    """First frame called ``name`` anywhere under ``directory``, or ``None``."""
+    if not os.path.isdir(directory):
+        return None
+    for path in find_raw_frames(directory):
+        if os.path.basename(path) == name:
+            return path
+    return None
 
 
 class VisualQAGenerator:
@@ -37,21 +108,30 @@ class VisualQAGenerator:
 
                 # fits.getdata returns the primary (SCI) plane of the MEF files.
                 m_data = fits.getdata(group.master_filepath).astype(np.float32)
-                a_calibrated_raw = fits.getdata(group.anchor_filepath).astype(np.float32)
+                with fits.open(group.anchor_filepath) as hdul:
+                    a_calibrated_raw = np.asarray(hdul[0].data, dtype=np.float32)
+                    anchor_header = hdul[0].header.copy()
                 calibrated_filename = os.path.basename(group.anchor_filepath)
 
-                raw_filename = calibrated_filename.replace("calibrated_", "")
-                calibrated_dir = os.path.dirname(group.anchor_filepath)
-                raw_dir = os.path.join(os.path.dirname(calibrated_dir), "Raw")
-                raw_filepath = os.path.join(raw_dir, raw_filename)
+                raw_filepath, searched = find_raw_frame(
+                    group.anchor_filepath, calibrated_filename, anchor_header,
+                    config.phase2.raw_dir,
+                )
 
-                if os.path.exists(raw_filepath):
+                if raw_filepath:
                     a_raw = fits.getdata(raw_filepath).astype(np.float32)
-                    raw_title = f"1. True Raw\n({raw_filename})"
+                    raw_title = f"1. True Raw\n({os.path.basename(raw_filepath)})"
                 else:
                     a_raw = np.zeros_like(a_calibrated_raw)
                     raw_title = "1. True Raw\n(FILE NOT FOUND)"
-                    logger.warning(f"     -> [Warning] Could not find {raw_filename} in {raw_dir}.")
+                    raw_name = str(anchor_header.get(
+                        "RAWFILE", calibrated_filename.replace("calibrated_", "", 1))).strip()
+                    logger.warning(
+                        f"     -> [Warning] Could not find {raw_name}; searched "
+                        f"{', '.join(searched)}. Set phase2.raw_dir to the raw "
+                        f"directory (frames calibrated before RAWDIR was stamped "
+                        f"carry no provenance)."
+                    )
 
                 a_raw_bg, _ = MathEngine.extract_2d_background(a_raw, box, filt)
                 a_calibrated_bg, _ = MathEngine.extract_2d_background(a_calibrated_raw, box, filt)

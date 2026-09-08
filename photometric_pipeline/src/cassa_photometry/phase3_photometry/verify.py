@@ -1,7 +1,7 @@
 """Post-calibration verification: compare catalog magnitudes against APASS,
 Pan-STARRS and SDSS to estimate the residual photometric offset and scatter.
 
-The report shows both error bars -- our ``Mag_Error`` (propagated from the ERR
+The report shows both error bars -- our ``MAGERR_ISO`` (propagated from the ERR
 plane) and the reference catalog's own uncertainty -- so an offset can be judged
 against the errors. The cross-match radius is derived from the astrometric
 solution (``ASTRMS``, written by phase 2) rather than fixed; see
@@ -10,17 +10,18 @@ solution (``ASTRMS``, written by phase 2) rather than fixed; see
 
 import os
 
-import numpy as np
 import astropy.units as u
+import numpy as np
+from astropy.coordinates import SkyCoord, match_coordinates_sky
 from astropy.io import fits
 from astropy.table import Table
-from astropy.coordinates import SkyCoord, match_coordinates_sky
 from astroquery.sdss import SDSS
 from astroquery.vizier import Vizier
 
 from cassa_photometry.config import load_config
 from cassa_photometry.instruments import get_profile
 from cassa_photometry.phase3_photometry import catalogs
+
 
 def companion_fits(csv_path):
     """Yield the FITS files that belong to a ``_catalog.csv``, nearest match first."""
@@ -46,20 +47,37 @@ def match_radius_arcsec(csv_path, config):
     Falls back to the fixed ``phase3.zp_match_tol_arcsec`` when no ASTRMS exists
     (masters solved before this was recorded, or a failed solve).
     """
-    cfg = config.phase3
     for pf in companion_fits(csv_path):
         try:
             header = fits.getheader(pf)
-            astrms = float(header.get("ASTRMS"))
-        except (TypeError, ValueError, OSError):
-            continue  # no ASTRMS, or a header we cannot read -- try the next file
-        if astrms > 0:
-            radius = min(max(cfg.match_radius_sigma * astrms,
-                             cfg.match_radius_min_arcsec),
-                         cfg.match_radius_max_arcsec)
-            nstars = header.get("ASTNSTAR", "?")
-            return radius, (f"{cfg.match_radius_sigma:g} x ASTRMS {astrms:.3f}\" "
-                            f"(WCS fit to {nstars} stars)")
+        except OSError:
+            continue
+        radius, why = match_radius_from_header(header, config)
+        if "ASTRMS" in why:
+            return radius, why
+    return match_radius_from_header(None, config)
+
+
+def match_radius_from_header(header, config):
+    """The same radius, from a header already in hand.
+
+    Phase 3's zero point matches against the same astrometry the verification
+    tool does, so both derive their radius here rather than one of them keeping
+    a hardcoded 2 arcsec. On the workshop masters ASTRMS is about 0.5", so a
+    fixed 2" was matching at roughly 4 sigma where 3 will do.
+    """
+    cfg = config.phase3
+    try:
+        astrms = float(header.get("ASTRMS"))
+    except (AttributeError, TypeError, ValueError):
+        astrms = None
+    if astrms and astrms > 0:
+        radius = min(max(cfg.match_radius_sigma * astrms,
+                         cfg.match_radius_min_arcsec),
+                     cfg.match_radius_max_arcsec)
+        nstars = header.get("ASTNSTAR", "?")
+        return radius, (f"{cfg.match_radius_sigma:g} x ASTRMS {astrms:.3f}\" "
+                        f"(WCS fit to {nstars} stars)")
     return (cfg.zp_match_tol_arcsec,
             "fixed phase3.zp_match_tol_arcsec -- no ASTRMS in the header")
 
@@ -74,14 +92,19 @@ _EXTRA_FILTERS = {
 }
 
 
-def detect_filter(csv_path, default_filter, instrument=None):
+def detect_filter(csv_path, default_filter, instrument=None, config=None):
     """Reference-catalog column for a catalog CSV, from its companion FITS.
 
     Filter naming comes from the instrument profile, so this tool agrees with
     phases 1-3 instead of keeping its own copy of the mapping. Falls back to
     filename parsing when there is no companion FITS to read.
+
+    With neither ``instrument`` nor ``config`` the ``generic`` profile is used,
+    which is not necessarily the profile the run was configured with.
     """
-    instrument = instrument or get_profile()
+    instrument = instrument or get_profile(
+        getattr(config, "instrument", None), config=config
+    )
     for pf in companion_fits(csv_path):
         try:
             with fits.open(pf) as hdul:
@@ -99,13 +122,34 @@ def detect_filter(csv_path, default_filter, instrument=None):
 
     # Fallback: Guess from the CSV filename if no FITS file exists
     base_name = os.path.basename(csv_path).upper()
-    if '_R_' in base_name or '-R-' in base_name: return 'rmag'
-    elif '_V_' in base_name or '-V-' in base_name: return 'Vmag'
-    elif '_B_' in base_name or '-B-' in base_name: return 'Bmag'
-    elif '_I_' in base_name or '-I-' in base_name: return 'imag'
-    elif '_G_' in base_name or '-G-' in base_name: return 'gmag'
-    
+    for token, column in _FILENAME_BANDS.items():
+        if f"_{token}_" in base_name or f"-{token}-" in base_name:
+            return column
     return default_filter
+
+
+#: Filename token -> reference-catalog column, for frames with no companion FITS.
+_FILENAME_BANDS = {"R": "rmag", "V": "Vmag", "B": "Bmag", "I": "imag", "G": "gmag"}
+
+
+def _select_stars(cat, config):
+    """The catalog's stars, and a one-line description of how they were chosen."""
+    if "CLASS" in cat.colnames:
+        classes = np.asarray([str(c).upper() for c in cat["CLASS"]])
+        keep = classes == "STAR"
+        if "FLAGS" in cat.colnames:
+            keep &= np.asarray(cat["FLAGS"], dtype=np.int64) == 0
+        return cat[keep], "CLASS == STAR (PSF vs Kron concentration)"
+
+    if "ELLIPTICITY" in cat.colnames:
+        print("[NOTE] This catalog predates the CLASS column; falling back to the "
+              "ellipticity cut, which measures shape rather than concentration.")
+        keep = np.asarray(cat["ELLIPTICITY"], dtype=float) < config.phase3.ellipticity_star_max
+        return cat[keep], f"ELLIPTICITY < {config.phase3.ellipticity_star_max}"
+
+    print("[ERROR] Neither CLASS nor ELLIPTICITY is present; cannot separate "
+          "stars from galaxies.")
+    return None, "none"
 
 
 def cross_match_and_report(catalog_name, cat_coords, cat_mags, bright_stars, my_coords,
@@ -115,15 +159,15 @@ def cross_match_and_report(catalog_name, cat_coords, cat_mags, bright_stars, my_
     error (delta), and prints a formatted scientific report.
 
     ``cat_mag_errs`` carries the reference catalog's own magnitude uncertainties so the
-    report can show both error bars side by side; our ``Mag_Error`` comes from the
+    report can show both error bars side by side; our ``MAGERR_ISO`` comes from the
     ERR plane propagated through phases 1-3.
     """
     idx, d2d, _ = match_coordinates_sky(my_coords, cat_coords)
-    
+
     # Accept a match only inside the radius derived from the astrometric solution,
     # so we are confident it is the same star and not a neighbour.
     match_mask = d2d < match_radius * u.arcsec
-    
+
     print(f"\n--- {catalog_name.upper()} VERIFICATION REPORT "
           f"(Filter: {matched_filter} | match radius: {match_radius:.2f}\") ---")
     header = (f"{'Obj ID':<7} | {'RA (deg)':<10} | {'DEC (deg)':<10} | "
@@ -131,46 +175,46 @@ def cross_match_and_report(catalog_name, cat_coords, cat_mags, bright_stars, my_
               f"{catalog_name + ' Mag':<16} | {catalog_name + ' Err':<16} | {'Delta':<10}")
     print(header)
     print("-" * len(header))
-    
+
     errors = []
     for i in range(len(bright_stars)):
         if match_mask[i]:
             ps_idx = idx[i]
             true_mag = cat_mags[ps_idx]
-            calc_mag = bright_stars['Absolute_Mag'][i]
-            calc_err = bright_stars['Mag_Error'][i]
-            
+            calc_mag = bright_stars['MAG_ISO'][i]
+            calc_err = bright_stars['MAGERR_ISO'][i]
+
             # Skip masked, negative, or missing data from the catalog
-            if np.ma.is_masked(true_mag) or np.isnan(true_mag) or true_mag < 0: 
+            if np.ma.is_masked(true_mag) or np.isnan(true_mag) or true_mag < 0:
                 continue
-            
+
             true_err = None
             if cat_mag_errs is not None:
                 e = cat_mag_errs[ps_idx]
                 if not np.ma.is_masked(e) and np.isfinite(e) and e > 0:
                     true_err = float(e)
             true_err_str = f"{true_err:.3f}" if true_err is not None else "n/a"
-            
+
             # Calculate the mathematical offset
             delta = calc_mag - true_mag
             errors.append(delta)
-            
-            print(f"{bright_stars['ID'][i]:<7} | {bright_stars['RA_deg'][i]:<10.5f} | {bright_stars['Dec_deg'][i]:<10.5f} | "
+
+            print(f"{bright_stars['NUMBER'][i]:<7} | {bright_stars['ALPHA_J2000'][i]:<10.5f} | {bright_stars['DELTA_J2000'][i]:<10.5f} | "
                   f"{calc_mag:<9.3f} | {calc_err:<9.3f} | {true_mag:<16.3f} | {true_err_str:<16} | {delta:+.3f} mag")
-                  
+
     if len(errors) > 0:
         mean_error = np.mean(errors)
         std_error = np.std(errors)
         print("-" * len(header))
         print(f"Mean Calibration Error (Offset): {mean_error:+.4f} mag")
         print(f"Standard Deviation (Scatter)   : {std_error:.4f} mag")
-        
+
         # Intelligent feedback based on the catalog
         if abs(mean_error) < 0.1:
             print(f"✅ EXCELLENT! Matches {catalog_name} perfectly.")
         else:
             print(f"⚠️ NOTE: Noticeable offset against {catalog_name}.")
-            print(f"   This is likely a 'Color Term' difference between your physical glass filter")
+            print("   This is likely a 'Color Term' difference between your physical glass filter")
             print(f"   and the {catalog_name} passband. To force-match this specific catalog,")
             print(f"   you would need to add {-mean_error:.4f} to your Zero Point.")
     else:
@@ -191,35 +235,43 @@ def verify_calibration(csv_path, filter_band="rmag", config=None):
     # 1. Load the generated catalog
     cat = Table.read(csv_path, format='csv')
 
-    # 2. Filter for STARS (Round objects), dropping galaxies/cosmic rays/hot pixels
-    if 'Ellipticity' not in cat.colnames:
-        print("[ERROR] 'Ellipticity' column missing. Cannot separate stars from galaxies.")
+    # 2. Keep the stars.
+    #
+    # CLASS comes from MAG_PSF - MAG_AUTO against the frame's own stellar locus,
+    # which measures *concentration*. The older ELLIPTICITY cut measured *shape*,
+    # so a face-on elliptical galaxy passed as a star and a slightly trailed star
+    # did not. ELLIPTICITY is still the fallback for catalogs written before
+    # CLASS existed.
+    stars, basis = _select_stars(cat, config)
+    if stars is None:
         return
-
-    mask_stars = cat['Ellipticity'] < config.phase3.ellipticity_star_max
-    stars = cat[mask_stars]
-    
     if len(stars) == 0:
-        print("[ERROR] No round stars found in the catalog based on the ellipticity threshold.")
+        print(f"[ERROR] No stars found in the catalog ({basis}).")
         return
 
-    # 3. Sort by brightness and take the top 25
-    # We only use the brightest stars because they have the highest Signal-to-Noise ratio
-    stars.sort('Absolute_Mag')
+    # 3. Sort by brightness and take the top 25.
+    #
+    # Skipping the very brightest: they are the ones that saturate, and a
+    # saturated star's magnitude is wrong in a way that would be blamed on the
+    # zero point. Anything flagged is dropped outright.
+    magnitude_column = "MAG_BEST" if "MAG_BEST" in stars.colnames else "MAG_ISO"
+    stars = stars[np.isfinite(np.asarray(stars[magnitude_column], dtype=float))]
+    stars.sort(magnitude_column)
     bright_stars = stars[:25]
-    
-    print(f" -> Found {len(stars)} round objects (stars). Selecting the {len(bright_stars)} brightest for verification...\n")
-    
+
+    print(f" -> {len(stars)} star(s) by {basis}; verifying the {len(bright_stars)} "
+          f"brightest by {magnitude_column}.\n")
+
     # 4. Get the center coordinate and dynamic bounding box
-    mean_ra = np.mean(bright_stars['RA_deg'])
-    mean_dec = np.mean(bright_stars['Dec_deg'])
+    mean_ra = np.mean(bright_stars['ALPHA_J2000'])
+    mean_dec = np.mean(bright_stars['DELTA_J2000'])
     center_coord = SkyCoord(ra=mean_ra, dec=mean_dec, unit=(u.deg, u.deg))
-    my_coords = SkyCoord(ra=bright_stars['RA_deg'], dec=bright_stars['Dec_deg'], unit=(u.deg, u.deg))
-    
-    ra_spread = np.max(bright_stars['RA_deg']) - np.min(bright_stars['RA_deg'])
-    dec_spread = np.max(bright_stars['Dec_deg']) - np.min(bright_stars['Dec_deg'])
+    my_coords = SkyCoord(ra=bright_stars['ALPHA_J2000'], dec=bright_stars['DELTA_J2000'], unit=(u.deg, u.deg))
+
+    ra_spread = np.max(bright_stars['ALPHA_J2000']) - np.min(bright_stars['ALPHA_J2000'])
+    dec_spread = np.max(bright_stars['DELTA_J2000']) - np.min(bright_stars['DELTA_J2000'])
     radius = max(ra_spread, dec_spread) * u.deg / 2.0 + (1 * u.arcmin)
-    
+
     # =================================================================
     # CATALOG 1: Pan-STARRS (via NASA MAST)
     # =================================================================
@@ -247,16 +299,16 @@ def verify_calibration(csv_path, filter_band="rmag", config=None):
         else:
             print("\n>>> Querying SDSS DR12 (via SQL to bypass radius limits)...")
             # Convert 'rmag' -> 'r' for SDSS formatting
-            sdss_filter = filter_band[0] if filter_band.endswith('mag') else filter_band 
-            
+            sdss_filter = filter_band[0] if filter_band.endswith('mag') else filter_band
+
             # Build a bounding box to strictly encapsulate our 25 stars
-            ra_min, ra_max = np.min(bright_stars['RA_deg']) - 0.02, np.max(bright_stars['RA_deg']) + 0.02
-            dec_min, dec_max = np.min(bright_stars['Dec_deg']) - 0.02, np.max(bright_stars['Dec_deg']) + 0.02
-            
+            ra_min, ra_max = np.min(bright_stars['ALPHA_J2000']) - 0.02, np.max(bright_stars['ALPHA_J2000']) + 0.02
+            dec_min, dec_max = np.min(bright_stars['DELTA_J2000']) - 0.02, np.max(bright_stars['DELTA_J2000']) + 0.02
+
             # Send a raw SQL query to SDSS to bypass the arbitrary 3.0 arcmin Python limit (type=6 means 'STAR')
             sql_query = f"SELECT ra, dec, {sdss_filter}, err_{sdss_filter} FROM PhotoObj WHERE ra BETWEEN {ra_min} AND {ra_max} AND dec BETWEEN {dec_min} AND {dec_max} AND type=6"
             sdss_res = SDSS.query_sql(sql_query)
-            
+
             if sdss_res is not None and len(sdss_res) > 0:
                 sdss_coords = SkyCoord(ra=sdss_res['ra'], dec=sdss_res['dec'], unit=(u.deg, u.deg))
                 sdss_mags = sdss_res[sdss_filter]
@@ -274,7 +326,7 @@ def verify_calibration(csv_path, filter_band="rmag", config=None):
     # =================================================================
     try:
         print("\n>>> Querying APASS DR9 (VizieR)...")
-        
+
         # We use an Asian-focused robust mirror hopper to bypass ISP blocks
         apass_res = None
         mirrors = [
@@ -284,10 +336,10 @@ def verify_calibration(csv_path, filter_band="rmag", config=None):
             'vizier.saao.ac.za',       # South Africa
             'vizier.cds.unistra.fr',   # France
             'vizier.cfa.harvard.edu',  # USA
-            'vizier.ast.cam.ac.uk',    # UK 
+            'vizier.ast.cam.ac.uk',    # UK
             'vizier.hia.nrc.ca'        # Canada
         ]
-        
+
         for mirror in mirrors:
             print(f" -> Attempting APASS connection via mirror: {mirror}")
             # Request all columns (*) instead of risking a specific name
@@ -300,19 +352,19 @@ def verify_calibration(csv_path, filter_band="rmag", config=None):
                     apass_res = res[0]
                     print(f" -> Success! Connected to {mirror}")
                     break # Success! Break out of the mirror loop
-            except Exception as e:
+            except Exception:
                 print(f" -> [WARNING] Mirror {mirror} failed or blocked.")
-        
+
         if apass_res is not None:
             # Bulletproof string stripping to exactly match the Engine's fuzzy logic
             filter_prefix = filter_band[0].lower() # 'r', 'v', 'b'
-            
+
             target_cols = [
-                c for c in apass_res.colnames 
-                if c.replace("'", "").replace("_", "").lower().startswith(filter_prefix) 
+                c for c in apass_res.colnames
+                if c.replace("'", "").replace("_", "").lower().startswith(filter_prefix)
                 and 'mag' in c.lower()
             ]
-            
+
             if len(target_cols) > 0:
                 best_col = target_cols[0]
                 print(f" -> Auto-detected APASS magnitude column: '{best_col}'")
@@ -334,7 +386,7 @@ def verify_calibration(csv_path, filter_band="rmag", config=None):
 def run(input_path, default_filter="rmag", config=None, instrument=None):
     """Verify one ``_catalog.csv`` file or a directory of them."""
     config = config or load_config()
-    instrument = instrument or get_profile(config.instrument)
+    instrument = instrument or get_profile(config.instrument, config=config)
     input_path = os.path.abspath(input_path)
 
     if os.path.isdir(input_path):

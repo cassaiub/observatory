@@ -7,8 +7,8 @@ weighted stack that returns a propagated variance plane.
 
 import numpy as np
 from astropy.stats import sigma_clip
-from skimage.transform import warp
 from photutils.background import Background2D, MedianBackground
+from skimage.transform import warp
 
 
 class MathEngine:
@@ -24,16 +24,35 @@ class MathEngine:
             return data - flat_bg, flat_bg
 
     @staticmethod
-    def calc_scale(target_data, ref_data, target_coords, ref_coords):
-        """Median flux ratio (reference / target) at matched star positions."""
-        src_x = np.clip(np.round(target_coords[:, 0]).astype(int), 0, target_data.shape[1] - 1)
-        src_y = np.clip(np.round(target_coords[:, 1]).astype(int), 0, target_data.shape[0] - 1)
-        dst_x = np.clip(np.round(ref_coords[:, 0]).astype(int), 0, ref_data.shape[1] - 1)
-        dst_y = np.clip(np.round(ref_coords[:, 1]).astype(int), 0, ref_data.shape[0] - 1)
+    def calc_scale(target_data, ref_data, target_coords, ref_coords, aperture_radius=5.0):
+        """Transparency ratio (reference / target) from matched stars.
 
-        t_flux, r_flux = target_data[src_y, src_x], ref_data[dst_y, dst_x]
-        valid = (t_flux > 0) & (r_flux > 0)
-        return np.nanmedian(r_flux[valid] / t_flux[valid]) if np.any(valid) else 1.0
+        Measured as a **sum over an aperture**, not from the peak pixel. A star's
+        peak scales roughly as ``1/FWHM**2``, so a peak-pixel ratio reads a
+        change in seeing as a change in transparency -- and that spurious factor
+        then multiplies the whole frame before stacking, carrying straight into
+        the master and hence the zero point. Integrated flux is conserved under
+        seeing changes, which is the entire point of using it.
+        """
+        radius = max(float(aperture_radius), 1.5)
+        target_flux = _aperture_sums(target_data, target_coords, radius)
+        ref_flux = _aperture_sums(ref_data, ref_coords, radius)
+
+        valid = (
+            np.isfinite(target_flux) & np.isfinite(ref_flux)
+            & (target_flux > 0) & (ref_flux > 0)
+        )
+        if not np.any(valid):
+            return 1.0
+        ratios = ref_flux[valid] / target_flux[valid]
+        # Sigma-clip: a mismatched pair or a cosmic ray on one star should not
+        # rescale the frame.
+        if ratios.size >= 4:
+            clipped = sigma_clip(ratios, sigma=3.0, maxiters=3, masked=True)
+            kept = ratios[~np.ma.getmaskarray(clipped)]
+            if kept.size:
+                ratios = kept
+        return float(np.median(ratios))
 
     @staticmethod
     def register_plane(plane, inverse_map, output_shape, order=3, cval=np.nan):
@@ -42,14 +61,42 @@ class MathEngine:
                     order=order, cval=cval, preserve_range=True)
 
     @staticmethod
-    def register_variance(variance, inverse_map, output_shape, cval=np.nan):
-        """Warp a variance plane (bilinear, clipped non-negative to avoid overshoot)."""
+    def register_variance(variance, inverse_map, output_shape, order=1, cval=np.nan):
+        """Warp a variance plane onto the reference grid.
+
+        Two caveats, stated rather than hidden:
+
+        * Interpolation forms each output pixel as ``sum(w_i x_i)``, whose
+          variance is ``sum(w_i**2 var_i)`` -- not ``sum(w_i var_i)``, which is
+          what warping the variance plane directly computes. The result is
+          therefore an over-estimate of the per-pixel variance.
+        * It also **correlates neighbouring pixels**, so summing this plane over
+          an aperture under-estimates the true uncertainty of that sum. Phase 2
+          records the interpolation order used so a consumer can know.
+
+        Bilinear (order 1) is kept deliberately even though the data is warped
+        bicubic: a bicubic kernel rings, and negative variance is meaningless.
+        """
         warped = warp(variance, inverse_map=inverse_map, output_shape=output_shape,
-                      order=1, cval=cval, preserve_range=True)
+                      order=order, cval=cval, preserve_range=True)
         return np.clip(warped, 0.0, None)
 
     @staticmethod
-    def weighted_stack(cube, varcube, weights, sigma=3.0, maxiters=3, use_sigma_clip=False):
+    def register_mask(mask, inverse_map, output_shape):
+        """Warp a boolean/integer mask with nearest-neighbour interpolation.
+
+        Nearest-neighbour because a DQ bit is a statement about a pixel, not a
+        quantity to be averaged: interpolating it would invent fractional flags
+        and spread a single bad pixel over its neighbours' values.
+        """
+        warped = warp(np.asarray(mask, dtype=float), inverse_map=inverse_map,
+                      output_shape=output_shape, order=0, cval=0.0,
+                      preserve_range=True)
+        return np.rint(warped).astype(np.int32)
+
+    @staticmethod
+    def weighted_stack(cube, varcube, weights, sigma=3.0, maxiters=3,
+                       use_sigma_clip=False, bad_pixels=None):
         """Inverse-variance weighted combine with rejection, returning SCI and VAR.
 
         Parameters
@@ -63,8 +110,12 @@ class MathEngine:
         sigma, maxiters : float, int
             Sigma-clip parameters (used when ``use_sigma_clip``).
         use_sigma_clip : bool
-            If True, reject outliers with sigma-clipping; otherwise reject the
-            per-pixel min and max (classic min/max rejection for small stacks).
+            If True, reject outliers with sigma-clipping. If False, nothing is
+            rejected: with only a handful of frames there is not enough
+            information to identify an outlier without throwing away most of the
+            signal.
+        bad_pixels : ndarray of bool, shape (N, H, W), optional
+            Per-frame mask of pixels to exclude (from the DQ planes).
 
         Returns
         -------
@@ -73,6 +124,9 @@ class MathEngine:
         master_var : ndarray, shape (H, W)
             Propagated variance of the weighted mean:
             ``sum(w_i^2 var_i) / (sum w_i)^2`` over the surviving frames.
+        n_used : ndarray, shape (H, W)
+            How many frames actually contributed to each pixel. Zero means no
+            coverage, and is what the master's ``DQ_NO_DATA`` bit is set from.
         """
         cube = np.asarray(cube, dtype=np.float64)
         varcube = np.asarray(varcube, dtype=np.float64)
@@ -82,9 +136,19 @@ class MathEngine:
             clipped = sigma_clip(cube, sigma=sigma, maxiters=maxiters, axis=0, masked=True)
             reject = np.ma.getmaskarray(clipped)
         else:
-            reject = (cube == np.nanmin(cube, axis=0)) | (cube == np.nanmax(cube, axis=0))
-        valid = reject == False  # noqa: E712 -- explicit boolean array
+            # No rejection below the sigma-clip threshold. Min/max rejection --
+            # what this used to do -- discards two frames of every three, so a
+            # 3-frame stack kept ONE frame per pixel, and where several frames
+            # shared a value (flat regions after float32 quantisation, saturated
+            # cores, zeroed no-data) it could reject them all and leave a NaN.
+            reject = np.zeros(cube.shape, dtype=bool)
+
+        valid = ~reject
         valid &= np.isfinite(cube) & np.isfinite(varcube)
+        if bad_pixels is not None:
+            # Pixels phase 1 flagged are excluded from the combine rather than
+            # averaged in as good data.
+            valid &= ~np.asarray(bad_pixels, dtype=bool)
 
         w_valid = np.where(valid, w, 0.0)
         wsum = w_valid.sum(axis=0)
@@ -94,7 +158,7 @@ class MathEngine:
         with np.errstate(divide="ignore", invalid="ignore"):
             master = np.where(wsum > 0, data_num / wsum, np.nan)
             master_var = np.where(wsum > 0, var_num / (wsum ** 2), np.nan)
-        return master, master_var
+        return master, master_var, valid.sum(axis=0).astype(np.int32)
 
     @staticmethod
     def center_crop(data, fraction=0.5):
@@ -103,3 +167,31 @@ class MathEngine:
         y1, y2 = int(h * (1 - fraction) / 2), int(h * (1 + fraction) / 2)
         x1, x2 = int(w * (1 - fraction) / 2), int(w * (1 + fraction) / 2)
         return data[y1:y2, x1:x2]
+
+
+def _aperture_sums(data, coords, radius):
+    """Background-subtracted flux in a circular aperture at each position.
+
+    A small local median annulus is subtracted so the ratio measures starlight
+    rather than sky, which differs between frames.
+    """
+    from photutils.aperture import (
+        ApertureStats,
+        CircularAnnulus,
+        CircularAperture,
+        aperture_photometry,
+    )
+
+    positions = np.asarray(coords, dtype=float)
+    if positions.size == 0:
+        return np.array([])
+
+    aperture = CircularAperture(positions, r=radius)
+    annulus = CircularAnnulus(positions, r_in=radius * 2.0, r_out=radius * 3.0)
+    clean = np.nan_to_num(np.asarray(data, dtype=float), nan=0.0)
+    try:
+        table = aperture_photometry(clean, aperture)
+        background = ApertureStats(clean, annulus).median
+        return np.asarray(table["aperture_sum"]) - background * aperture.area
+    except Exception:
+        return np.full(len(positions), np.nan)

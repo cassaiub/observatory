@@ -4,53 +4,105 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cassa-photometry"
-version = "0.1.0"
-description = "End-to-end photometric reduction pipeline for the CASSA Observatory / iTelescope network, with full error propagation."
+version = "0.2.0.dev0"
+description = "End-to-end photometric reduction pipeline for the CASSA Observatory, extensible to any imaging setup through an instrument profile, with full error propagation."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "CASSA Observatory" }]
-keywords = ["astronomy", "photometry", "ccd", "data-reduction", "astrometry"]
+keywords = ["astronomy", "photometry", "ccd", "cmos", "data-reduction", "astrometry"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Topic :: Scientific/Engineering :: Astronomy",
     "Intended Audience :: Science/Research",
+    # Linux and macOS only, and deliberately so: phase 2 needs a plate solver
+    # and none is published for Windows. Windows users run this inside WSL,
+    # which is x86-64 Linux and therefore not a separate target. Declaring the
+    # supported systems here is what stops a native Windows `pip install` from
+    # looking like an endorsed configuration.
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
 ]
 
+# Version floors are set where an API or behaviour break is real, not by habit:
+#   astropy>=6.0      TRFLSQFitter; LevMarLSQFitter deprecated
+#   photutils>=2.0    SourceCatalog column names changed between 1.x and 2.x
+#   astroscrappy>=1.1 <=1.0 returned the cleaned array already in electrons,
+#                     which would make the gain_correct that follows it a
+#                     silent gain-squared error
+#   ccdproc>=2.4      uncertainty propagation fixes in subtract_dark
 dependencies = [
-    "numpy",
-    "scipy",
-    "astropy>=5.0",
-    "ccdproc>=2.3",
-    "astroscrappy",
-    "photutils>=1.5",
-    "astroalign",
-    "scikit-image",
-    "astroquery",
-    "matplotlib",
-    "pandas",
+    "numpy>=1.24",
+    "scipy>=1.9",
+    "astropy>=6.0",
+    "ccdproc>=2.4",
+    "astroscrappy>=1.1",
+    "photutils>=2.0",
+    "astroalign>=2.5",
+    "scikit-image>=0.20",
+    "astroquery>=0.4.7",
+    "matplotlib>=3.6",
+    "pandas>=1.5",
     "psutil",
     "tqdm",
     "pyyaml",
+    "requests",
+    "sep",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov"]
+dev = ["pytest>=7", "pytest-cov", "ruff"]
+# The in-process plate solver, for machines with no `solve-field` binary.
+#
+# NOTE: conda-forge's `astrometry` package (the astrometry.net suite, which is
+# what provides `solve-field`) installs a Python package of the SAME NAME.
+# The two overwrite each other, so this must never become a hard dependency.
+# install.sh adds it only when `solve-field` is absent; the solver backend
+# tells them apart at runtime via `hasattr(astrometry, "Solver")`.
+# Wheels: Linux x86_64 / musl, macOS x86_64 + arm64, CPython 3.9-3.13.
+# No Linux aarch64 wheel -- those users want the conda route. No Windows
+# wheel either, and conda-forge has no Windows build, which is why native
+# Windows is unsupported and WSL is the documented route.
+solver = ["astrometry>=4.3"]
+all = ["cassa-photometry[dev,solver]"]
 
 [project.scripts]
+cassa = "cassa_photometry.cli:main"
 cassa-calibrate = "cassa_photometry.cli:calibrate"
 cassa-integrate = "cassa_photometry.cli:integrate"
 cassa-photometry = "cassa_photometry.cli:photometry"
 cassa-verify = "cassa_photometry.cli:verify"
 cassa-diagnose = "cassa_photometry.cli:diagnose"
 cassa-run = "cassa_photometry.cli:run_all"
+cassa-doctor = "cassa_photometry.cli:doctor"
+cassa-simulate = "cassa_photometry.cli:simulate"
+cassa-index-fetch = "cassa_photometry.cli:index_fetch"
+
+# Third-party instrument profiles register themselves here, so a new
+# observing setup never requires editing this package. See docs/CUSTOMIZING.md.
+#
+# [project.entry-points."cassa_photometry.instruments"]
+# my_scope = "my_package.profiles:MyScopeProfile"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-cassa_photometry = ["data/*.cfg"]
+cassa_photometry = ["data/*.cfg", "data/*.json", "simulate/data/*.csv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "network: test requires outbound internet (deselect with -m 'not network')",
+    "slow: test takes more than a few seconds",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = ["build", "workshop/notebooks"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]

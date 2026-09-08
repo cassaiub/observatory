@@ -1,0 +1,47 @@
+# Conda environment for cassa-photometry.
+#
+# This is the route for everyone: it pins Python, supplies the scientific stack
+# as prebuilt binaries, and brings Jupyter for the workshop notebooks.
+#
+# The plate solver is deliberately NOT listed here. conda-forge builds
+# `astrometry` for linux-64 and osx-64 only -- there is no osx-arm64 and no
+# win-64 build -- and an environment.yml has no way to express "only on these
+# platforms". Listing it unconditionally makes `conda env create` fail outright
+# on an Apple Silicon Mac. install.sh therefore installs the solver after the
+# environment exists, picking whichever backend the platform can actually run.
+#
+# Do not run `conda env create` by hand -- `./install.sh` does it, then installs
+# the package and checks the result. This file is kept in sync with the
+# dependency list in pyproject.toml.
+name: cassa-photometry
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - setuptools>=64
+  - wheel
+  # --- scientific core (mirrors pyproject.toml [project.dependencies]) -------
+  - numpy>=1.24
+  - scipy>=1.9
+  - astropy>=6.0
+  - ccdproc>=2.4
+  - astroscrappy>=1.1
+  - photutils>=2.0
+  - astroalign>=2.5
+  - scikit-image>=0.20
+  - astroquery>=0.4.7
+  - matplotlib>=3.6
+  - pandas>=1.5
+  - sep
+  - psutil
+  - tqdm
+  - pyyaml
+  - requests
+  # --- notebooks ------------------------------------------------------------
+  # The pipeline does not need Jupyter; the workshop does.
+  - jupyterlab
+  # --- development ----------------------------------------------------------
+  - pytest>=7
+  - pytest-cov
+  - ruff

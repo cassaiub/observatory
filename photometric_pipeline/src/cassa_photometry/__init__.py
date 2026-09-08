@@ -18,7 +18,7 @@ planes (see :mod:`cassa_photometry.fits_utils`), and each phase reads and writes
 its own directory under one work directory (see :mod:`cassa_photometry.paths`).
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0.dev0"
 
 from cassa_photometry.config import PipelineConfig, load_config
 

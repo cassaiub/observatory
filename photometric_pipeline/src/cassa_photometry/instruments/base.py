@@ -77,6 +77,7 @@ class InstrumentProfile:
     READ_NOISE_KEYS = ("READNOIS", "RDNOISE", "E-NOISE")
     SATURATION_KEYS = ("SATURATE", "SATLEVEL", "FULLWELL")
     READ_MODE_KEYS = ("READOUTM", "READMODE", "READOUT")
+    PIXEL_SCALE_KEYS = ("SECPIX", "SECPIX1", "SECPIXX", "PIXSCALE", "SCALE")
     SUBFRAME_ORIGIN_KEYS = (("XORGSUBF", "YORGSUBF"), ("SUBFRAMX", "SUBFRAMY"))
     CALIBRATION_STATUS_KEYS = ("CALSTAT",)
 
@@ -136,8 +137,23 @@ class InstrumentProfile:
         exposure = self._first_float(header, ("EXPTIME", "EXPOSURE"))
         return 0.0 if exposure is None else exposure
 
-    def get_gain(self, header):
-        """System gain in electrons per ADU, or None if the header is silent.
+    # --- What the header alone says ------------------------------------------
+    #
+    # These three are the seam between the two authorities. ``get_*`` answers
+    # "what is this frame's gain", which may come from the profile's own tables;
+    # ``*_from_header`` answers the narrower "what does the frame itself claim",
+    # and returns None when it claims nothing.
+    #
+    # The distinction matters because a user-configured ``detector:`` block has
+    # to sit *between* the two: it must not overrule the frame, and the
+    # profile's fallback table must not overrule it. Without this seam a
+    # configured value is silently shadowed by whatever the profile would have
+    # guessed. A profile whose header cascade differs from the default (see
+    # ``Cassa8InchProfile``, where ``GAIN`` is a setting rather than e-/ADU)
+    # overrides these, not just ``get_*``.
+
+    def gain_from_header(self, header):
+        """Gain in e-/ADU as stated by the frame itself, or None.
 
         ``EGAIN`` is tried before ``GAIN`` deliberately: on most CMOS cameras
         ``GAIN`` holds the unitless *gain setting* while ``EGAIN`` holds the
@@ -146,9 +162,22 @@ class InstrumentProfile:
         """
         return self._first_float(header, self.GAIN_KEYS)
 
-    def get_read_noise(self, header):
-        """Read noise in electrons, or None if the header is silent."""
+    def read_noise_from_header(self, header):
+        """Read noise in electrons as stated by the frame itself, or None."""
         return self._first_float(header, self.READ_NOISE_KEYS)
+
+    def saturation_from_header(self, header):
+        """Saturation level in raw ADU as stated by the frame itself, or None."""
+        return self._first_float(header, self.SATURATION_KEYS)
+
+    # --- What this profile knows ---------------------------------------------
+    def get_gain(self, header):
+        """System gain in electrons per ADU, or None if nothing can say."""
+        return self.gain_from_header(header)
+
+    def get_read_noise(self, header):
+        """Read noise in electrons, or None if nothing can say."""
+        return self.read_noise_from_header(header)
 
     def get_saturation(self, header):
         """Saturation level in raw ADU, or None if unknown.
@@ -158,10 +187,113 @@ class InstrumentProfile:
         hardware table) rather than making every run carry a config file just to
         flag saturated pixels correctly.
         """
-        return self._first_float(header, self.SATURATION_KEYS)
+        return self.saturation_from_header(header)
+
+    def get_pixel_scale(self, header):
+        """Plate scale in arcsec/pixel, or None when nothing can say.
+
+        Phase 2 needs this to hand ``solve-field`` a scale hint (without one the
+        solver considers every scale, and the on-demand index selector cannot
+        tell which index files a field needs at all), and phase 3 needs it to
+        size its reference-catalog search cone.
+
+        Four sources, in order of how directly they were measured:
+
+        1. **The header's own plate scale** (``SECPIX`` and friends). Written by
+           the acquisition software or a previous solve; believe it.
+        2. **Pixel size and focal length.** Note that ``XPIXSZ`` is by
+           convention the pixel size *after binning* -- MaxIm DL, SGP and N.I.N.A.
+           all write it that way -- so no binning factor is applied here. Doing
+           so would double-count it.
+        3. **The profile's optics**, via :meth:`pixel_scale_arcsec`, which is an
+           *unbinned* scale, so binning is applied to that one.
+        4. **An existing WCS**, if the frame has already been solved.
+        """
+        scale = self._first_float(header, self.PIXEL_SCALE_KEYS)
+        if scale is not None and scale > 0:
+            return scale
+
+        pixel_um = self._first_float(header, ("XPIXSZ", "PIXSIZE1", "PIXSIZE"))
+        focal_mm = self._first_float(header, ("FOCALLEN",))
+        if pixel_um and focal_mm:
+            return pixel_um / focal_mm * 206.265
+
+        optics = self.pixel_scale_arcsec()
+        if optics:
+            binning = self._first_float(header, ("XBINNING", "BINX", "CCDXBIN")) or 1.0
+            return optics * max(binning, 1.0)
+
+        return self._pixel_scale_from_wcs(header)
+
+    @staticmethod
+    def _pixel_scale_from_wcs(header):
+        """Plate scale from an existing WCS, or None.
+
+        Uses ``proj_plane_pixel_scales`` rather than reading ``CD1_1``: on a
+        rotated field ``CD1_1`` is ``scale * cos(theta)``, which understates the
+        scale by up to the rotation.
+        """
+        try:
+            from astropy.wcs import WCS
+            from astropy.wcs.utils import proj_plane_pixel_scales
+        except ImportError:  # pragma: no cover - astropy is a hard dependency
+            return None
+        try:
+            wcs = WCS(header)
+            if not wcs.has_celestial:
+                return None
+            scales = proj_plane_pixel_scales(wcs.celestial) * 3600.0
+        except Exception:
+            return None
+        scale = float(scales.mean())
+        return scale if scale > 0 else None
+
+    def pixel_scale_arcsec(self):
+        """Unbinned plate scale from the profile's own optics, or None.
+
+        A profile that knows its telescope's focal length and detector pixel
+        pitch should return it here; the generic profile knows neither.
+        """
+        return None
+
+    def apply_linearity(self, data, header):
+        """Correct detector non-linearity, in raw ADU. Identity by default.
+
+        CMOS response is typically 1-5% non-linear approaching full well, and
+        because the error grows with signal it tilts the magnitude scale rather
+        than offsetting it -- the same class of defect as a wrong aperture
+        correction, and invisible in any single frame.
+
+        A profile with a measured curve (``cassa-camchar`` produces one)
+        overrides this. Returning the input unchanged is the honest default:
+        the pipeline records whether a correction was applied rather than
+        implying one.
+        """
+        return data
 
     def get_overscan_region(self, header):
-        """Return the overscan slice, or None if not applicable."""
+        """Overscan region as a FITS section string, or None if not applicable.
+
+        A profile that returns a region must also return a
+        :meth:`get_trim_region`, or the frame cannot be trimmed afterwards and
+        the overscan correction is skipped rather than guessed at.
+        """
+        return self._section(header, ("BIASSEC", "OSCANSEC"))
+
+    def get_trim_region(self, header):
+        """The science region to keep after overscan subtraction, or None."""
+        return self._section(header, ("TRIMSEC", "DATASEC"))
+
+    @staticmethod
+    def _section(header, keys):
+        """First key holding a FITS section string like ``[1:100,1:200]``."""
+        for key in keys:
+            value = header.get(key)
+            if value in (None, ""):
+                continue
+            text = str(value).strip()
+            if text.startswith("[") and text.endswith("]") and ":" in text:
+                return text
         return None
 
     def needs_fringe_correction(self, header):

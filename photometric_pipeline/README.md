@@ -1,9 +1,10 @@
 # cassa-photometry
 
-An end-to-end photometric reduction pipeline for the **CASSA Observatory /
-iTelescope** network. It takes raw FITS frames and produces WCS-solved,
-flux-calibrated images and source catalogs — with a **full error budget carried
-from the raw pixels to the final magnitudes**.
+An end-to-end photometric reduction pipeline for the **CASSA Observatory**,
+extensible to any imaging setup through an instrument profile. It takes raw FITS
+frames and produces WCS-solved, flux-calibrated images and source catalogs —
+with a **full error budget carried from the raw pixels to the final
+magnitudes**.
 
 The pipeline runs in four phases, all sharing one set of conventions
 (configuration, logging, and multi-extension FITS I/O). Each phase reads the
@@ -38,8 +39,40 @@ Every science image is a **multi-extension FITS** file with three planes:
   the inverse-variance-weighted stack variance as the master ERR plane.
 - **Phase 3** uses the ERR plane for aperture and segment photometry, computes a
   **filter-wise zero point with uncertainty** (`MAGZERO` / `MAGZERR`,
-  sigma-clipped), and writes `Flux_Error`, `Mag_Error`, `SNR` and `FLAGS`
+  sigma-clipped), and writes `FLUXERR_ISO`, `MAGERR_ISO`, `SNR` and `FLAGS`
   columns in the catalog.
+
+### Which magnitude to use
+
+The catalog carries several, because they measure different things:
+
+| Column | What it is | Use it for |
+|--------|-----------|------------|
+| **`MAG_BEST`** | PSF magnitude for point sources, Kron for extended | **the default choice** |
+| `MAG_PSF` | PSF-fitted; the matched filter for a star | faint stars, crowded fields |
+| `MAG_AUTO` | Kron elliptical (SExtractor's `AUTO`) | galaxies, total flux |
+| `MAG_APER` | Measured in the zero point's own aperture | anything needing exact consistency with `MAGZERO` |
+| `MAG_ISO` | **Isophotal** — flux above the detection threshold | comparison with older catalogs only |
+
+`MAG_ISO` is not a total magnitude and never was. It captures a
+brightness-dependent fraction of a source, so applying an aperture-derived zero
+point to it produces a *tilt* rather than an offset. Measured against simulated
+data with known truth:
+
+```
+              median error   scatter   trend with brightness
+MAG_BEST         +0.034       0.091      +0.004 mag/mag
+MAG_APER         -0.006       0.110      -0.011 mag/mag
+MAG_ISO          +0.531       0.546      +0.348 mag/mag     <- a tilt
+```
+
+`MAG_ISO`'s error runs from +0.18 mag at V=12 to +1.70 mag at V=16.5. It is kept
+under its own name for compatibility; the pipeline says so in the log.
+
+Sources are classified as `STAR`, `EXTENDED`, `AMBIGUOUS`, `SATURATED` or
+`EDGE` from `MAG_PSF - MAG_AUTO` against the frame's own stellar locus, with a
+`CLASSLIM` recording the magnitude below which the classes stop being
+meaningful. `AMBIGUOUS` is the honest answer, not a failure.
 
 ### Astrometric error
 
@@ -62,35 +95,99 @@ in the stage 2 panel and in `metrics.json`.
 ```bash
 git clone <repo-url>
 cd cassa_observatory/photometric_pipeline
-pip install .            # or: pip install -e .   (editable, for development)
+./install.sh
 ```
 
-This installs all Python dependencies (astropy, ccdproc, photutils, astroalign,
-astroquery, …) and the `cassa-*` commands.
+That is the whole procedure. `install.sh` picks an environment (an active conda
+env, else conda if you have it, else a plain `python3 -m venv`), installs every
+dependency **including a working plate solver**, installs the pipeline, and then
+runs `cassa-doctor` to prove it worked. Running it again updates in place.
 
-### System dependency: Astrometry.net (`solve-field`)
+The conda route is the one to prefer: `environment.yml` pins Python, brings the
+scientific stack as prebuilt binaries, and includes JupyterLab for the workshop
+notebooks. Install [Miniforge](https://conda-forge.org/download/) first if you
+have no conda.
 
-Phase 2 shells out to `solve-field`, which is **not** a Python package and cannot
-be installed with `pip`. Install it separately:
+On **Windows**, install [WSL](https://learn.microsoft.com/windows/wsl/install)
+and run the same commands inside it. There is no native Windows install and
+`install.ps1` does not attempt one: no plate solver is published for Windows —
+conda-forge builds `astrometry` for `linux-64` and `osx-64` only, and the PyPI
+in-process solver ships no Windows wheel — so a native environment would build
+and then fail at the first WCS solve. Running `install.ps1` prints the WSL
+steps.
+
+```powershell
+.\install.ps1        # prints the WSL instructions; installs nothing
+```
+
+### If something is wrong
 
 ```bash
-# conda (recommended, cross-platform)
-conda install -c conda-forge astrometry
-
-# Debian/Ubuntu
-sudo apt-get install astrometry.net
+cassa-doctor
 ```
+
+It reports your Python and package versions against what the pipeline requires,
+which plate-solving backends are usable, where astrometry index files will come
+from, whether the reference catalogs are reachable, and whether the working
+directory is writable — one line each, with the fix for anything that failed.
+Paste its output when asking for help.
+
+### About the plate solver
+
+Phase 2 needs one of two backends, and the installer arranges whichever suits
+your machine:
+
+| Backend | Where it comes from | Available on |
+|---|---|---|
+| `solve-field` | conda-forge `astrometry`, or your system package manager | Linux x86-64, macOS Intel. Preferred when present. |
+| in-process | `pip install "cassa-photometry[solver]"` | Linux x86-64, macOS Intel **and Apple Silicon**. |
+
+Neither exists for Windows or for ARM Linux, which is why those go through WSL
+and x86-64 respectively.
+
+The solver is deliberately **not** in `environment.yml`: conda-forge has no
+`osx-arm64` build of `astrometry`, and an environment file has no way to say
+"only on some platforms", so listing it there makes `conda env create` fail
+outright on an Apple Silicon Mac. `install.sh` installs it afterwards, picking
+the backend the platform can run.
+
+The two must never both be installed: conda's Astrometry.net package ships
+Python bindings that import under the same name as the PyPI solver. `install.sh`
+adds the PyPI one only when `solve-field` is absent.
 
 ### Astrometry index files
 
-`solve-field` needs sky index files (several GB). They are **not** bundled and are
-git-ignored. Download the appropriate `index-*.fits` files for your field of
-view and point the pipeline at them via any of:
+Plate solving matches star patterns against sky *index files*. **You do not need
+to download them.** The pipeline works out which files a field requires and
+fetches those from the public Astrometry.net server, caching them under
+`~/.cache/cassa-photometry/astrometry`.
+
+The saving is the point: a CASSA 8-inch field needs **4 files, 165 MB** out of
+the ~34 GB the server offers — 0.5% of the set.
+
+To see what a dataset will need before committing to the download, or to prepare
+a laptop before going somewhere without a network:
+
+```bash
+cassa-index-fetch --from-headers raw/ --dry-run    # what it needs, and how big
+cassa-index-fetch --from-headers raw/              # fetch it
+```
+
+If you already have a full local set, point the pipeline at it and nothing will
+be downloaded:
 
 ```bash
 export CASSA_ASTROMETRY_INDEX=/path/to/astrometry_data     # environment variable
 # or set phase2.astrometry_index_dir in a config YAML
 # otherwise the pipeline defaults to ./astrometry_data
+```
+
+### Development
+
+```bash
+./install.sh          # includes pytest and ruff
+pytest
+make lint
 ```
 
 ## Usage
@@ -106,6 +203,23 @@ work/
 ```
 
 A re-run replaces that phase's products in place rather than accumulating copies.
+
+The *raw* tree is the one layout the pipeline does not own, so it reads whatever
+the acquisition software wrote. A night arrives sorted by frame type and target:
+
+```
+raw/
+  20260903/
+    BIAS/untargeted/   20260903T054529.715412_untargeted_Blue_BIAS_....fits
+    DARK/untargeted/   ...
+    FLAT/untargeted/   ...
+    LIGHT/m22/         20260903T043707.171323_m22_Luminance_LIGHT_....fits
+```
+
+Point `-i` at `raw/` (or at the whole archive, or at a single flat directory of
+frames) and it is searched recursively. The folder names are documentation, not
+classification: every frame is sorted by its `IMAGETYP`, `FILTER` and `EXPTIME`
+header, so a frame filed under the wrong folder is still reduced as what it is.
 
 ```bash
 # Phase 1: calibrate raw frames
@@ -143,13 +257,13 @@ Gaussian fits + a stacked radial profile)** and adds stage-specific checks:
 - **stage_0 (raw):** image + histogram, background, star detection, saturation map.
 - **stage_1 (calibrated):** SCI/ERR/DQ panels, DQ flag counts, ERR-vs-signal (Poisson) check, background-flatness improvement vs raw.
 - **stage_2 (master):** SCI/ERR/DQ, SNR map, depth boost vs a single frame (≈√N), WCS status + field centre/plate scale, astrometric RMS (`ASTRMS`) and matched-star count.
-- **stage_3 (photometry):** Mag vs Mag_Error, SNR vs Mag, number counts / limiting magnitude, source map, star/galaxy shape split, ZP/`MAGZERR`.
+- **stage_3 (photometry):** Mag vs MAGERR_ISO, SNR vs Mag, number counts / limiting magnitude, source map, star/galaxy shape split, ZP/`MAGZERR`.
 
 ## Verification (`cassa-verify`)
 
 An independent check of the zero point: catalog magnitudes are cross-matched
 against **APASS → Pan-STARRS → SDSS** and reported side by side, with **both**
-error bars — your `Mag_Error` (from the ERR plane) and the reference catalog's
+error bars — your `MAGERR_ISO` (from the ERR plane) and the reference catalog's
 own uncertainty — so a disagreement can be judged against the errors rather than
 eyeballed:
 
@@ -183,14 +297,18 @@ observatory without a fork.
 | Name | Setup |
 |------|-------|
 | `generic` | **Default.** Standard FITS keywords only — correct for any setup whose acquisition software writes them (see the header spec). |
-| `itelescope` | The iTelescope hosted network (T11, T24, T32, T68), with per-telescope detector constants and its luminance-flat-for-red convention. |
 | `cassa8` | CASSA 8-inch f/5 Newtonian + QHY miniCAM8M (IMX585 mono), LRGB+SHO wheel. |
+
+Only the setups this observatory operates are built in, so the list is a
+statement about CASSA rather than a directory of everyone's telescopes.
+**Describing your own setup never requires editing this package** — see
+[Adding a setup](#adding-a-setup).
 
 Select one on any command, or in the config file:
 
 ```bash
 cassa-calibrate -i /data/raw -o work/phase1 --instrument cassa8
-cassa-run -i /data/raw -o work --instrument itelescope
+cassa-run -i /data/raw -o work --instrument cassa8
 ```
 
 ```yaml
@@ -214,10 +332,44 @@ header *cannot* say — and to refuse to guess when it does not know:
 
 ### Adding a setup
 
-Subclass `InstrumentProfile`, override only what differs, and add one line to
-`instruments/registry.py`. The base class is concrete, so a setup that writes
-standard keywords may need to override nothing at all beyond its detector
-constants. `instruments/cassa.py` is a worked example.
+Three routes, in increasing effort. Use the first that works.
+
+**1. A `detector:` block — no code.** If your camera simply does not record its
+own gain and read noise, say so and reduce with `generic`:
+
+```yaml
+# my_config.yaml
+instrument: generic
+detector:
+  gain: 1.4                 # e-/ADU
+  read_noise: 7.0           # e-
+  saturation_adu: 60000
+  pixel_scale_arcsec: 0.40  # unbinned
+  filter_map: {Sloan-R: R_Photo}
+  science_bands: {Sloan-R: R}
+```
+
+These fill in **where the header is silent**; the frame remains the first
+authority on its own data. `override_header: true` inverts that, and says so in
+the log every time it discards a card.
+
+**2. A profile class in a local file.** For anything header-dependent — a CMOS
+conversion-gain curve, a multi-amplifier layout. Copy
+[`examples/profiles/template.py`](examples/profiles/template.py), then:
+
+```yaml
+instrument_module: my_profile.py:MyObservatoryProfile
+```
+
+No installation, no edit to this repository — which is what keeps your clone
+rebasable against upstream.
+
+**3. An installed package.** To distribute a profile, register it under the
+`cassa_photometry.instruments` entry-point group in your own `pyproject.toml`.
+
+`instruments/cassa.py` is the worked example in the package;
+[`examples/profiles/`](examples/profiles/) holds a commented template and a
+retired real-world profile.
 
 ### CMOS cameras: gain is not a number
 
@@ -280,11 +432,80 @@ counterpart in APASS, Pan-STARRS or SDSS. Cross-matching one anyway yields a zer
 point that is numerically valid and physically meaningless, so `science_band()`
 returns `None` for them and phase 3 **skips the zero point and flux calibration**.
 Detection still runs and the catalog is still written, carrying
-`Instrumental_Mag` with `Absolute_Mag` as `NaN`.
+`MAG_INST` with `MAG_ISO` as `NaN`.
 
 LRGB `Red`/`Green`/`Blue` map to the R/G/B catalog bands and luminance to V.
 These are imaging filters, not Johnson-Cousins or Sloan, so a colour term
 remains — fine for differential photometry, worth stating for absolute work.
+
+## Customizing a run
+
+Three levels, cheapest first, all documented in
+[`docs/CUSTOMIZING.md`](docs/CUSTOMIZING.md):
+
+1. **Config** — turn any reduction step off, reorder the steps, add your own,
+   change any threshold. What ran is recorded in the product (`CALPLAN` /
+   `CALSKIP` in phase 1, `STEPPLAN` / `STEPSKIP` in phases 2–3,
+   `step_plans` in phase 4's `metrics.json`), so a customised reduction cannot
+   pass for a default one.
+   ```yaml
+   phase1:
+     steps:
+       cosmic_rays: false            # or: exclude: [cosmic_rays, flat]
+       # reject cosmic rays BEFORE flat fielding rather than after
+       order: [linearity, overscan, bad_pixel_mask, bias, dark,
+               cosmic_rays, flat, measure_fwhm]
+   phase3:
+     steps:
+       psf_photometry: false
+       custom: {write_bright_list: local/my_steps.py:write_bright_list}
+   ```
+   An order that breaks a real dependency (flat before bias) is **refused when
+   the config is read**, naming the violation — but genuine choices, like
+   cosmic rays before or after the flat, are permitted. Every command takes
+   `--skip`, `--only` and `--show-plan`; `cassa-run` also takes `--from`/`--to`.
+   ```bash
+   cassa-run -i raw -o work --show-plan     # print the plan, reduce nothing
+   cassa-run -i raw -o work --from 2 --to 3 # resume without recalibrating
+   ```
+2. **Describe your setup** — a `detector:` block or your own instrument profile,
+   without editing this package.
+3. **Change an algorithm** — documented extension seams, and how to keep a
+   modified clone mergeable with upstream.
+
+## Working offline
+
+The pipeline is meant to be usable from a laptop away from the university.
+
+```bash
+cassa-index-fetch --from-headers raw/    # astrometry indexes, once
+cassa-run -i raw -o work --instrument cassa8   # populates the catalog cache
+# ...later, with no network:
+cassa-photometry work/phase2 --offline
+```
+
+Reference-catalog queries are cached under `~/.cache/cassa-photometry/catalogs`,
+so a field reduced once can be re-reduced with no network at all. `--offline`
+never touches the network and says clearly when a field is not in the cache,
+rather than hanging on a series of timeouts.
+
+## Simulated data with known truth
+
+```bash
+cassa-simulate --preset workshop --out sim
+cassa-run -i sim/raw -o sim/work --instrument cassa8
+```
+
+Generates a complete observing run — bias, dark, flat and science frames — from
+a real star field (Gaia DR3 positions and magnitudes, so the frames genuinely
+plate-solve), and writes every source's true magnitude and every frame's true
+seeing, transparency and zero point alongside. The dataset is distributed as a
+**seed rather than a download**: the same command gives everyone the same
+frames.
+
+This is how the numbers quoted in this README were measured, and it is the
+honest way to check that a change to the pipeline improved something rather than
+merely altered it.
 
 ## Configuration
 
@@ -295,6 +516,8 @@ radii, zero-point match tolerance, saturation level, …) live in
 ```yaml
 # my_config.yaml
 instrument: cassa8               # see "Instrument profiles" above
+log_level: INFO
+
 phase1:
   saturation_adu: 60000          # fallback only; see "Bad pixels" below
   fallback_gain: 1.0             # last resort; used only if header AND profile
@@ -302,13 +525,43 @@ phase1:
   allow_precalibrated: false     # reduce frames with a non-empty CALSTAT anyway
   bpm_dark_rate_factor: 20.0     # hot if dark current > 20x the median rate
   bpm_bias_noise_factor: 5.0     # unstable if bias scatter > 5x the median
+  cr_max_fraction: 0.01          # discard a cosmic-ray mask claiming more than
+                                 # 1% of a frame; no cosmic-ray rate reaches it,
+                                 # so it is a crowded field being flagged as one
+phase2:
+  solver: auto                   # auto | solve-field | astrometry-py
+  epoch_bin: night               # none | night | "6h" -- see below
+  stack_weight: point_source     # point_source | extended
+  fwhm_reject_factor: 1.6        # drop frames softer than 1.6x the median
 phase3:
-  fwhm: 4.0
   zp_sigma_clip: 2.5
-  match_radius_sigma: 3.0        # cassa-verify radius = sigma * ASTRMS ...
+  offline: false                 # reference catalogs from cache only
+  aperture_r_factor: 2.0         # aperture radius in units of the MEASURED FWHM
+  match_radius_sigma: 3.0        # cross-match radius = sigma * ASTRMS ...
   match_radius_min_arcsec: 1.0   # ... clamped to this floor ...
   match_radius_max_arcsec: 5.0   # ... and this cap
 ```
+
+Note that `phase3.fwhm` is now only a **fallback**. Apertures are sized from
+`FWHMPX`, which phases 1 and 2 measure from the stars in the frame itself; a
+fixed aperture whatever the seeing was is worth up to 0.3 mag of per-epoch error
+in the zero point.
+
+### Epochs
+
+Frames are grouped by observing night, binned on **local noon** rather than the
+UT date — an observing night crosses UT midnight at most longitudes, and binning
+on the date string cuts one night into two half-depth masters.
+
+```yaml
+phase2:
+  epoch_bin: night     # default
+  epoch_bin: none      # all dates together (the pre-0.2 behaviour)
+  epoch_bin: "6h"      # sub-night bins, for fast variables
+```
+
+Nightly binning averages intra-night variability. That is right for a supernova
+and wrong for a short-period variable, which wants a sub-night bin.
 
 ```bash
 cassa-photometry /data/masters --config my_config.yaml

@@ -5,12 +5,13 @@ PdfPages multi-page output) and adds reusable panels for histograms, radial
 profiles, scatter plots and text summaries.
 """
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")  # headless
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
 from astropy.visualization import ZScaleInterval
+from matplotlib.backends.backend_pdf import PdfPages
 
 _ZSCALE = ZScaleInterval()
 

@@ -186,24 +186,28 @@ class Cassa8InchProfile(InstrumentProfile):
         fraction = (setting - lo_key) / (hi_key - lo_key)
         return curve[lo_key][index] + fraction * (curve[hi_key][index] - curve[lo_key][index])
 
-    def get_gain(self, header):
-        """``EGAIN`` if the header carries it, else the mode+gain-keyed curve.
+    def gain_from_header(self, header):
+        """What the frame claims its gain is -- ``EGAIN``/``SYSGAIN`` only.
 
-        Note that ``GAIN`` on this camera is the *setting*, not e-/ADU, so the
-        base class's ``EGAIN -> GAIN -> SYSGAIN`` cascade would misread it. Only
-        ``EGAIN`` and ``SYSGAIN`` are consulted here; ``GAIN`` keys the curve.
+        ``GAIN`` on this camera is the unitless *setting*, not e-/ADU, so the
+        base class's ``EGAIN -> GAIN -> SYSGAIN`` cascade would misread it by
+        roughly a factor of 100. ``GAIN`` keys the detector curve instead.
         """
-        gain = self._first_float(header, ("EGAIN", "SYSGAIN"))
+        return self._first_float(header, ("EGAIN", "SYSGAIN"))
+
+    def get_gain(self, header):
+        """``EGAIN`` if the header carries it, else the mode+gain-keyed curve."""
+        gain = self.gain_from_header(header)
         return self._interpolate(header, 0) if gain is None else gain
 
     def get_read_noise(self, header):
         """``READNOIS`` if the header carries it, else the mode+gain-keyed curve."""
-        read_noise = super().get_read_noise(header)
+        read_noise = self.read_noise_from_header(header)
         return self._interpolate(header, 1) if read_noise is None else read_noise
 
     def get_saturation(self, header):
         """Header saturation if present, else this camera's 16-bit ceiling."""
-        saturation = super().get_saturation(header)
+        saturation = self.saturation_from_header(header)
         return self.SATURATION_ADU if saturation is None else saturation
 
     # --- Optics ---------------------------------------------------------------

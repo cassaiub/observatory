@@ -1,23 +1,32 @@
 import glob
 import os
 
+import astropy.units as u
 import numpy as np
 import pytest
-import astropy.units as u
 from astropy.io import fits
 from astropy.nddata import CCDData, StdDevUncertainty
+from conftest import FixtureProfile
 
 from cassa_photometry.config import load_config
+from cassa_photometry.fits_utils import DQ_COSMIC_RAY
 from cassa_photometry.logging_utils import get_logger
-from cassa_photometry.instruments import ITelescopeNetworkProfile
 from cassa_photometry.phase1_calibration.data_models import load_standardized_ccds
-from cassa_photometry.phase1_calibration.processor import (
-    UniversalProcessor, crop_master_to_frame, subtract_scaled_dark,
+from cassa_photometry.phase1_calibration.pipeline import (
+    _build_bpm,
+    _outlier_threshold,
+    _stack_scatter,
+    build_master_bias,
+    build_master_dark,
+    build_master_flat,
 )
 from cassa_photometry.phase1_calibration.pipeline import (
-    _build_bpm, _outlier_threshold, _stack_scatter,
-    build_master_bias, build_master_dark, build_master_flat,
     run as run_phase1,
+)
+from cassa_photometry.phase1_calibration.processor import (
+    UniversalProcessor,
+    crop_master_to_frame,
+    subtract_scaled_dark,
 )
 
 LOGGER = get_logger("test_phase1")
@@ -103,7 +112,7 @@ def test_processor_rescales_a_mismatched_master_dark(tmp_path):
     from cassa_photometry.phase1_calibration.processor import UniversalProcessor
 
     cfg = load_config()
-    instrument = ITelescopeNetworkProfile()
+    instrument = FixtureProfile()
     path = _write(tmp_path, "sci.fits", 1000.0, "Light", 60.0)
     std_ccds = load_standardized_ccds(path, instrument, cfg)
 
@@ -120,7 +129,7 @@ def test_processor_rescales_a_mismatched_master_dark(tmp_path):
 
 def test_master_dark_records_exposure_and_bias_provenance(tmp_path):
     cfg = load_config()
-    instrument = ITelescopeNetworkProfile()
+    instrument = FixtureProfile()
     biases = [_write(tmp_path, f"b{i}.fits", 100.0, "Bias", 0.0) for i in range(3)]
     darks = [_write(tmp_path, f"d{i}.fits", 130.0, "Dark", 60.0) for i in range(3)]
 
@@ -136,7 +145,7 @@ def test_master_dark_records_exposure_and_bias_provenance(tmp_path):
 def test_mixed_dark_exposures_are_normalised_before_combining(tmp_path):
     """Darks of 60s and 120s must combine into one self-consistent master."""
     cfg = load_config()
-    instrument = ITelescopeNetworkProfile()
+    instrument = FixtureProfile()
     biases = [_write(tmp_path, f"b{i}.fits", 100.0, "Bias", 0.0) for i in range(3)]
     m_bias = build_master_bias(biases, instrument, cfg, LOGGER)
 
@@ -153,7 +162,7 @@ def test_mixed_dark_exposures_are_normalised_before_combining(tmp_path):
 def test_master_flat_is_dark_subtracted(tmp_path):
     """Dark current in the flats must not be normalised into the flat field."""
     cfg = load_config()
-    instrument = ITelescopeNetworkProfile()
+    instrument = FixtureProfile()
     biases = [_write(tmp_path, f"b{i}.fits", 100.0, "Bias", 0.0) for i in range(3)]
     m_bias = build_master_bias(biases, instrument, cfg, LOGGER)
     m_dark = _master(np.full(SHAPE, 600.0), exptime=60.0, gain=1.0, bias_subtracted=True)
@@ -169,7 +178,7 @@ def test_master_flat_is_dark_subtracted(tmp_path):
 def test_flats_are_normalised_before_combining(tmp_path):
     """Twilight flats fade as they are taken; the combine must see response, not level."""
     cfg = load_config()
-    instrument = ITelescopeNetworkProfile()
+    instrument = FixtureProfile()
 
     # Same 2x response pattern in every frame, at wildly different light levels.
     paths = []
@@ -280,11 +289,11 @@ def test_profile_saturation_takes_precedence_over_config(tmp_path):
     cfg.phase1.saturation_adu = 50000.0
     path = _write(tmp_path, "sci.fits", 30000.0, "Light", 60.0)
 
-    class KnownDetector(ITelescopeNetworkProfile):
+    class KnownDetector(FixtureProfile):
         def get_saturation(self, header):
             return 20000.0
 
-    assert not load_standardized_ccds(path, ITelescopeNetworkProfile(), cfg)[0].sat_mask.any()
+    assert not load_standardized_ccds(path, FixtureProfile(), cfg)[0].sat_mask.any()
     assert load_standardized_ccds(path, KnownDetector(), cfg)[0].sat_mask.all()
 
 
@@ -294,7 +303,7 @@ def test_saturation_read_from_the_header(tmp_path):
     with fits.open(path, mode="update") as hdul:
         hdul[0].header["SATURATE"] = 25000.0
 
-    std_ccd = load_standardized_ccds(path, ITelescopeNetworkProfile(), cfg)[0]
+    std_ccd = load_standardized_ccds(path, FixtureProfile(), cfg)[0]
 
     assert std_ccd.sat_mask.all()
 
@@ -344,7 +353,7 @@ def test_subframed_science_frame_is_reduced_against_full_frame_masters(tmp_path)
     fits.PrimaryHDU(np.full((8, 8), 1500.0, dtype=np.float32),
                     header=header).writeto(str(path))
 
-    std_ccds = load_standardized_ccds(str(path), ITelescopeNetworkProfile(), cfg)
+    std_ccds = load_standardized_ccds(str(path), FixtureProfile(), cfg)
     assert std_ccds[0].meta["subframe_origin"] == (4, 2)
 
     processor = UniversalProcessor(
@@ -366,7 +375,7 @@ def test_subframed_science_frame_is_reduced_against_full_frame_masters(tmp_path)
 def test_geometry_mismatch_without_an_roi_is_skipped_not_crashed(tmp_path):
     cfg = load_config()
     path = _write(tmp_path, "big.fits", 1500.0, "Light", 60.0)  # 16x16
-    std_ccds = load_standardized_ccds(path, ITelescopeNetworkProfile(), cfg)
+    std_ccds = load_standardized_ccds(path, FixtureProfile(), cfg)
 
     processor = UniversalProcessor(
         master_bias=_master(np.full((8, 8), 500.0)), config=cfg, logger=LOGGER,
@@ -410,3 +419,161 @@ def test_raw_science_frames_are_reduced_normally(tmp_path):
     raw, out = _run_dir(tmp_path)
     run_phase1(raw, out, config=load_config(), logger=LOGGER)
     assert len(glob.glob(os.path.join(out, "calibrated_*.fits"))) == 2
+
+
+# --- Scientific hardening (WP3) ----------------------------------------------
+
+def test_the_error_budget_excludes_the_bias_pedestal():
+    """Poisson noise comes from collected charge, not from an electronic offset.
+
+    Counting a 500 ADU pedestal as signal injects tens of electrons of
+    fictitious noise into every pixel, swamping the read noise on a sky-limited
+    frame.
+    """
+    from cassa_photometry.phase1_calibration.data_models import _poisson_plus_read_noise
+
+    gain, read_noise, pedestal = 1.4, 7.0, 500.0
+    data = np.full((4, 4), pedestal + 100.0)
+
+    with_pedestal = _poisson_plus_read_noise(data, gain, read_noise, bias_level=0.0)
+    without = _poisson_plus_read_noise(data, gain, read_noise, bias_level=pedestal)
+
+    assert without.mean() < with_pedestal.mean()
+    expected = np.sqrt(100.0 * gain + read_noise**2) / gain
+    assert without.mean() == pytest.approx(expected, rel=1e-6)
+
+
+def test_a_negative_measurement_still_carries_the_read_noise():
+    from cassa_photometry.phase1_calibration.data_models import _poisson_plus_read_noise
+
+    sigma = _poisson_plus_read_noise(np.full((2, 2), 400.0), 1.4, 7.0, bias_level=500.0)
+    assert np.all(sigma == pytest.approx(7.0 / 1.4))
+
+
+def test_the_median_uncertainty_is_wider_than_the_means():
+    """mad_std/sqrt(N) is the SEM of the mean; a median's is wider by sqrt(pi/2),
+    and understating it understates every science frame's ERR."""
+    from cassa_photometry.phase1_calibration.pipeline import MEDIAN_SEM_FACTOR
+
+    assert MEDIAN_SEM_FACTOR == pytest.approx(1.2533, abs=1e-4)
+
+
+def test_a_tiny_stack_does_not_claim_perfect_knowledge(tmp_path):
+    """mad_std over one frame is exactly zero, which would make the master
+    contribute nothing at all to the error budget."""
+    from cassa_photometry.phase1_calibration.pipeline import _combine_with_uncertainty
+
+    rng = np.random.default_rng(0)
+    ccds = []
+    for _ in range(2):
+        ccd = CCDData(rng.normal(500.0, 10.0, (8, 8)), unit=u.adu)
+        ccd.uncertainty = StdDevUncertainty(np.full((8, 8), 10.0))
+        ccds.append(ccd)
+
+    master = _combine_with_uncertainty(ccds)
+    assert np.all(master.uncertainty.array > 0)
+
+
+def test_calibration_stacks_reject_outliers():
+    from cassa_photometry.phase1_calibration.pipeline import _combine_with_uncertainty
+
+    rng = np.random.default_rng(1)
+    ccds = [CCDData(rng.normal(500.0, 3.0, (16, 16)), unit=u.adu) for _ in range(6)]
+    ccds[0].data[8, 8] = 50000.0          # a cosmic ray in a calibration frame
+
+    master = _combine_with_uncertainty(ccds, sigma_clip=3.0)
+    assert master.meta["NREJECT"] > 0
+    assert master.data[8, 8] < 600.0
+
+
+def test_vignetting_is_not_a_bad_pixel():
+    """A flat threshold against the global median condemns the corners of any
+    strongly vignetted optical train."""
+    from cassa_photometry.phase1_calibration.pipeline import _flat_relative_response
+
+    y, x = np.mgrid[0:128, 0:128]
+    radius = np.hypot(y - 63.5, x - 63.5) / np.hypot(63.5, 63.5)
+    # 0.65 vignetting puts the corners near 0.35, below the 0.5 bad-pixel cut,
+    # while they are perfectly good pixels behind a heavily vignetted train.
+    flat = 1.0 - 0.65 * radius**2
+    flat[64, 64] = 0.05                     # one genuinely dead pixel
+
+    assert (flat < 0.5).sum() > 100, "the test flat should look bad to a global cut"
+    relative = _flat_relative_response(flat, smooth_px=31)
+    bad = relative < 0.5
+    assert bad.sum() < 20, "vignetting still being flagged as defects"
+    assert bad[64, 64], "the genuinely dead pixel was missed"
+
+
+# --- Cosmic-ray mask vetting --------------------------------------------------
+#
+# astroscrappy cannot tell a stellar peak from a cosmic ray in a crowded field,
+# and it *replaces* what it flags. The pipeline cannot fix the detection, but it
+# can recognise an answer no cosmic-ray rate could produce.
+
+def test_a_plausible_cosmic_ray_mask_is_kept():
+    from cassa_photometry.phase1_calibration.processor import implausible_cosmic_rays
+
+    mask = np.zeros((100, 100), dtype=bool)
+    mask[:5, 0] = True                      # 0.05% of the frame: an ordinary night
+    assert implausible_cosmic_rays(mask, 0.01) == 0.0
+
+
+def test_a_mask_covering_the_field_is_rejected():
+    from cassa_photometry.phase1_calibration.processor import implausible_cosmic_rays
+
+    mask = np.zeros((100, 100), dtype=bool)
+    mask[:12] = True                        # 12%, as a globular cluster produces
+    assert implausible_cosmic_rays(mask, 0.01) == pytest.approx(0.12)
+
+
+def test_the_veto_can_be_switched_off():
+    from cassa_photometry.phase1_calibration.processor import implausible_cosmic_rays
+
+    mask = np.ones((10, 10), dtype=bool)
+    assert implausible_cosmic_rays(mask, 1.0) == 0.0
+
+
+def test_an_implausible_mask_leaves_the_science_data_untouched(tmp_path):
+    """The repair is what destroys data, so a vetoed mask must not be applied."""
+    cfg = load_config()
+    cfg.phase1.cr_max_fraction = 0.01
+
+    # A field of sharp peaks: astroscrappy flags a large share of it.
+    rng = np.random.default_rng(0)
+    data = rng.poisson(400.0, (64, 64)).astype(np.float32)
+    data[::2, ::2] += 4000.0
+    path = tmp_path / "crowded.fits"
+    header = fits.Header({"IMAGETYP": "Light", "EXPTIME": 60.0, "EGAIN": 1.0,
+                          "READNOIS": 5.0, "FILTER": "R"})
+    fits.PrimaryHDU(data, header=header).writeto(str(path))
+
+    std_ccds = load_standardized_ccds(str(path), FixtureProfile(), cfg)
+    before = std_ccds[0].ccd.data.copy()
+    frames = UniversalProcessor(config=cfg, logger=LOGGER).process_science_frame(std_ccds)
+
+    frame = frames[0]
+    gain = FixtureProfile().get_gain(header) or cfg.phase1.fallback_gain
+    assert frame.ccd.header.get("CRVETO"), "the veto did not fire on a peaky field"
+    assert not (frame.dq & DQ_COSMIC_RAY).any(), "vetoed flags must not survive"
+    np.testing.assert_allclose(frame.ccd.data, before * gain, rtol=1e-6)
+
+
+def test_a_normal_frame_keeps_its_cosmic_ray_repair(tmp_path):
+    """The guard must not disarm cosmic-ray rejection on ordinary data."""
+    cfg = load_config()
+    rng = np.random.default_rng(1)
+    data = rng.normal(400.0, 3.0, (64, 64)).astype(np.float32)
+    data[30, 30] = 9000.0                   # one sharp hit, as a cosmic ray is
+    path = tmp_path / "ordinary.fits"
+    header = fits.Header({"IMAGETYP": "Light", "EXPTIME": 60.0, "EGAIN": 1.0,
+                          "READNOIS": 5.0, "FILTER": "R"})
+    fits.PrimaryHDU(data, header=header).writeto(str(path))
+
+    std_ccds = load_standardized_ccds(str(path), FixtureProfile(), cfg)
+    frames = UniversalProcessor(config=cfg, logger=LOGGER).process_science_frame(std_ccds)
+
+    frame = frames[0]
+    assert not frame.ccd.header.get("CRVETO"), "a single hit is not implausible"
+    assert (frame.dq & DQ_COSMIC_RAY).any(), "the real cosmic ray went unflagged"
+    assert frame.ccd.data[30, 30] < 9000.0, "the cosmic ray was not repaired"

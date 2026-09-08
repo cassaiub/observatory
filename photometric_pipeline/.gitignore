@@ -39,3 +39,28 @@ Master_*.fits
 *.toc
 *.vrb
 *.synctex.gz
+
+# Environments created by install.sh
+.venv/
+.ruff_cache/
+
+# Simulated datasets (regenerate with: cassa-simulate --preset workshop)
+sim/
+
+# Instructor-only preparation notes. Not for participants, and deliberately not
+# in the repository: they carry the answers, the traps, a frank assessment of
+# this night's data, and the words to say out loud. Keep them local, or
+# circulate them out of band.
+workshop/slides/instructor_briefing.*
+workshop/slides/lecture_script.*
+
+# Internal engineering plans. Kept out of the repository because they are
+# working documents for whoever develops the pipeline, not reference material
+# for the people who run it: they carry defect audits, work-package checklists
+# and frank assessments of code that has since been fixed. Participants and
+# users are served by CUSTOMIZING.md (how to configure and extend a run) and
+# CHANGELOG.md (what changed), both of which ARE tracked.
+docs/master-plan.md
+docs/step-plan.md
+docs/target-driven-photometry-plan.md
+docs/astrometry-index-plan.md

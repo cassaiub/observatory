@@ -9,7 +9,7 @@ installable Python packages plus a shared master documentation set.
 
 | Package | Folder | Commands | What it does |
 |---------|--------|----------|--------------|
-| **cassa-photometry** | [`photometric_pipeline/`](photometric_pipeline/README.md) | `cassa-calibrate`, `cassa-integrate`, `cassa-photometry`, `cassa-diagnose`, `cassa-verify`, `cassa-run` | End-to-end imaging reduction (Phases 1–4): calibration → stacking + WCS → photometry/zero point → diagnostics, with a full `SCI`/`ERR`/`DQ` error budget. |
+| **cassa-photometry** | [`photometric_pipeline/`](photometric_pipeline/README.md) | `cassa-calibrate`, `cassa-integrate`, `cassa-photometry`, `cassa-diagnose`, `cassa-verify`, `cassa-run` | End-to-end imaging reduction (Phases 1–4): calibration → stacking + WCS → photometry/zero point → diagnostics, with a full `SCI`/`ERR`/`DQ` error budget and a configurable step plan (exclude, reorder or extend any phase's steps). |
 | **cassa-dimm** | [`DIMM/`](DIMM/README.md) | `cassa-dimm-monitor`, `cassa-dimm-batch`, `cassa-dimm-sim` | Continuous atmospheric-**seeing** monitor: watches a folder of frames, measures the differential motion of prism-mask star doublets, and reports airmass-corrected seeing as a live time series. |
 | **cassa-camchar** | [`camera_characterization/`](camera_characterization/README.md) | `cassa-camchar-analyze`, `cassa-camchar-sim` | CMOS **sensor characterization** via the Photon Transfer Curve: gain, read noise, full well, dynamic range, dark current, QE, and filter transmission. |
 

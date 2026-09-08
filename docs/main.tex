@@ -291,145 +291,116 @@ cassa-camchar-analyze data --outdir camchar_output
 \section{Installation \& Deployment Guide}
 This section covers the full setup of the \texttt{cassa-photometry} pipeline from scratch on Linux systems. The workflow is: (1) build a reproducible Conda environment that provides the scientific libraries and the \texttt{solve-field} binary, (2) install the \texttt{cassa-photometry} package to register its command-line tools, and (3) provide the astrometry index files. Instructions for bypassing HPC network-drive database locks are included, as these are commonly encountered on mounted network storage.
 
-\subsection{Install Miniconda3}
-\textit{If Miniconda3 is already installed and initialized, skip to the next step.}
-\begin{enumerate}[leftmargin=*]
-    \item \textbf{Download the latest Miniconda installer} for Linux using \texttt{wget}:
-\begin{lstlisting}[language=bash]
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda_installer.sh
-\end{lstlisting}
-
-    \item \textbf{Run the installer in silent mode.} Change the \texttt{-p} path to install it in a specific directory (e.g., a mounted hard drive instead of the default OS drive):
-\begin{lstlisting}[language=bash]
-bash miniconda_installer.sh -b -p ~/miniconda3
-\end{lstlisting}
-
-    \item \textbf{Initialize Conda} so it integrates with your shell profile:
-\begin{lstlisting}[language=bash]
-~/miniconda3/bin/conda init bash
-\end{lstlisting}
-
-    \item \textbf{Reload your shell configuration} to apply the changes:
-\begin{lstlisting}[language=bash]
-source ~/.bashrc
-\end{lstlisting}
-
-    \item \textbf{Clean up the installation file:}
-\begin{lstlisting}[language=bash]
-rm miniconda_installer.sh
-\end{lstlisting}
-\end{enumerate}
-
-\subsection{Prepare the Pipeline Configuration}
-The pipeline relies on a specific set of scientific and astronomical libraries. We utilize an \texttt{environment.yml} file to guarantee a reproducible and clean build.
-\begin{enumerate}[leftmargin=*]
-    \item Navigate to the root folder of your image processing project.
-    \item \textbf{Create a new configuration file:}
-\begin{lstlisting}[language=bash]
-nano environment.yml
-\end{lstlisting}
-    \item \textbf{Paste the following configuration} exactly as written:
-\begin{lstlisting}[language=bash]
-name: pipeline_env
-channels:
-  - conda-forge
-  - defaults
-dependencies:
-  - python=3.10
-  - pip
-  - numpy
-  - scipy
-  - astropy
-  - ccdproc
-  - astroscrappy
-  - photutils
-  - astroalign
-  - scikit-image
-  - astroquery
-  - matplotlib
-  - pandas
-  - psutil
-  - tqdm
-  - pyyaml
-  - astrometry
-\end{lstlisting}
-\textbf{Package roles:} \texttt{astroquery} powers the Phase 3 reference-catalog queries (APASS / Pan-STARRS / SDSS); \texttt{pandas} and \texttt{pyyaml} back the catalog/config layer; and \texttt{astrometry} provides the \texttt{solve-field} binary used for plate solving in Phase 2. All other libraries are the numerical and image-processing core (\texttt{ccdproc}, \texttt{photutils}, \texttt{astroalign}, \texttt{astroscrappy}).
-    \item Save and exit the text editor.
-\end{enumerate}
-
-\subsection{HPC Network Drive Bypass (Critical for Servers)}
-\begin{mdframed}[backgroundcolor=procbg, linecolor=secondary, linewidth=1.5pt, roundcorner=4pt]
-\textbf{Note:} When installing Conda environments on High-Performance Computing (HPC) nodes or mounted network storage, the fast dependency solver often crashes with a \texttt{sqlite3.}\allowbreak\texttt{OperationalError:}\allowbreak \texttt{database is locked} error due to file-lock restrictions. To bypass this, temporarily route the Conda cache to the server's local storage.
-\end{mdframed}
-\begin{enumerate}[leftmargin=*]
-    \item \textbf{Ensure any existing locked cache directory is deleted.} (Replace the path with your actual Miniconda installation path if it differs):
-\begin{lstlisting}[language=bash]
-rm -rf ~/miniconda3/pkgs/cache
-\end{lstlisting}
-
-    \item \textbf{Create a temporary cache folder} in the server's fast local \texttt{/tmp} directory:
-\begin{lstlisting}[language=bash]
-mkdir -p /tmp/pipeline_conda_cache
-\end{lstlisting}
-
-    \item \textbf{Create a symbolic link} pointing the Conda cache to this fast local folder:
-\begin{lstlisting}[language=bash]
-ln -s /tmp/pipeline_conda_cache ~/miniconda3/pkgs/cache
-\end{lstlisting}
-\end{enumerate}
-
-\subsection{Build the Environment}
-With the configuration ready and the database lock bypassed, you can safely build the pipeline environment.
-\begin{enumerate}[leftmargin=*]
-    \item \textbf{Execute the creation command} using the configuration file:
-\begin{lstlisting}[language=bash]
-conda env create -f environment.yml
-\end{lstlisting}
-
-    \item Wait for the solver to resolve dependencies and download the packages.
-    \item \textbf{Safely remove the temporary cache bypass} to prevent future errors when the server automatically clears temporary files:
-\begin{lstlisting}[language=bash]
-rm ~/miniconda3/pkgs/cache
-mkdir -p ~/miniconda3/pkgs/cache
-rm -rf /tmp/pipeline_conda_cache
-\end{lstlisting}
-
-    \item \textbf{Activate the newly created environment:}
-\begin{lstlisting}[language=bash]
-conda activate pipeline_env
-\end{lstlisting}
-\end{enumerate}
-
-\subsection{Install the \texttt{cassa-photometry} Package}
-The pipeline ships as a single installable Python package (\texttt{cassa-photometry}). Cloning the repository and installing it in \emph{editable} mode registers the command-line tools (\texttt{cassa-calibrate}, \texttt{cassa-integrate}, \texttt{cassa-photometry}, \texttt{cassa-diagnose}, \texttt{cassa-verify}, \texttt{cassa-run}) on your \texttt{PATH}.
-\begin{enumerate}[leftmargin=*]
-    \item \textbf{Clone the repository} and enter the pipeline directory:
+\subsection{Installation}
+The pipeline installs itself. Clone the repository and run one command:
 \begin{lstlisting}[language=bash]
 git clone <repository-url>
 cd photometric_pipeline
+./install.sh
 \end{lstlisting}
-    \item \textbf{Install the package into the active environment.} Because the Conda environment already provides every scientific dependency, we pass \texttt{--no-build-isolation} (reuse the installed build tools) and \texttt{--no-deps} (do not re-resolve libraries against PyPI). This is also the correct approach on HPC nodes with restricted outbound network access.
-\begin{lstlisting}[language=bash]
-pip install -e . --no-deps --no-build-isolation
-\end{lstlisting}
-\end{enumerate}
 
-\begin{mdframed}[backgroundcolor=masterbg, linecolor=primary, linewidth=1.5pt, roundcorner=4pt]
-\textbf{Why editable?} The \texttt{-e} flag links the installed command to the live source tree, so pulling updates from \texttt{git} takes effect immediately with no reinstall. Drop the \texttt{-e} for a fixed, production-frozen deployment.
+\texttt{install.sh} chooses an environment (an already-active Conda environment,
+else Conda if it is available, else a plain \texttt{python3 -m venv}), installs
+every dependency \emph{including a working plate solver}, installs the
+\texttt{cassa-photometry} package in editable mode, and then runs
+\texttt{cassa-doctor} to prove the result works. Running it again updates in
+place.
+
+\begin{mdframed}[backgroundcolor=procbg, linecolor=secondary, linewidth=1.5pt, roundcorner=4pt]
+\textbf{Supported platforms: Linux and macOS.} There is no native Windows
+install, and none is planned. Phase 2 plate-solves, and neither channel
+publishes a solver for Windows --- conda-forge builds \texttt{astrometry} for
+\texttt{linux-64} and \texttt{osx-64} only, and the PyPI in-process solver ships
+no Windows wheel. A native Windows environment would therefore build
+successfully and then fail at the first WCS solve; without a WCS there is no
+reference-catalog cross-match, hence no zero point and no calibrated magnitude.
+
+Windows users run the pipeline inside \textbf{WSL}, which is real x86-64 Linux
+--- so it is not a separate platform to support, and every instruction in this
+manual applies unchanged inside it. Running \texttt{install.ps1} from PowerShell
+installs nothing; it prints the WSL setup steps. \texttt{cassa-doctor} also
+reports native Windows as a failure with the same guidance, rather than letting
+the run die later at the solver.
+
+One practical note for WSL: Windows drives are mounted under \texttt{/mnt/c},
+so data downloaded on the Windows side is reachable, but the repository and the
+work directory should live in the Linux filesystem (your WSL home). Reducing a
+night across \texttt{/mnt} is several times slower.
 \end{mdframed}
 
-\subsection{Astrometry Index Files (Required for Phase 2)}
-The \texttt{solve-field} binary performs plate solving by matching star patterns against pre-computed \emph{index files}. These files are large (several GB) and are \textbf{not} bundled with the package or the repository; they must be downloaded once for the field of view of your instrument.
-\begin{enumerate}[leftmargin=*]
-    \item \textbf{Download the appropriate index series} (e.g. the \texttt{4100}--\texttt{4200} series from the Astrometry.net data server) and place the \texttt{index-*.fits} files in a dedicated directory, for example \texttt{astrometry\_data/}.
-    \item \textbf{Point the pipeline at that directory} using the \texttt{CASSA\_ASTROMETRY\_INDEX} environment variable (highest priority), the \texttt{phase2.astrometry\_index\_dir} config key, or by leaving the files in a \texttt{./astrometry\_data} folder relative to your working directory (the default):
+\begin{mdframed}[backgroundcolor=masterbg, linecolor=primary, linewidth=1.5pt, roundcorner=4pt]
+\textbf{Why two solver backends.} Phase 2 needs a plate solver, and
+\texttt{solve-field} --- the Astrometry.net binary --- cannot be installed with
+\texttt{pip}. So the installer adds a pip-installable in-process solver when
+\texttt{solve-field} is absent, which is what makes \texttt{pip install} alone
+sufficient on Linux and macOS. The two must never both be installed:
+conda-forge's Astrometry.net package ships Python bindings that import under the
+same name as the PyPI solver, and whichever lands second wins. The installer
+enforces this; \texttt{cassa-doctor} reports which backend is in use.
+\end{mdframed}
+
+\subsection{Options}
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\textbf{Flag} & \textbf{Effect} \\
+\hline
+\texttt{-{}-conda} & Force the Conda route (required on Linux aarch64, where the in-process solver has no wheel). \\
+\hline
+\texttt{-{}-venv} & Force a plain virtual environment in \texttt{./.venv}. \\
+\hline
+\texttt{-{}-new-env} & Build a dedicated environment even if one is already active. \\
+\hline
+\texttt{-{}-env-name NAME} & Conda environment name (default \texttt{cassa-photometry}). \\
+\hline
+\texttt{-{}-no-dev} & Skip \texttt{pytest} and \texttt{ruff}. \\
+\hline
+\end{tabularx}
+\end{center}
+
+\subsection{HPC Network Drive Bypass}
+\begin{mdframed}[backgroundcolor=procbg, linecolor=secondary, linewidth=1.5pt, roundcorner=4pt]
+\textbf{Note:} On HPC nodes and mounted network storage, Conda's dependency
+solver can fail with \texttt{sqlite3.}\allowbreak\texttt{OperationalError:}\allowbreak
+\texttt{database is locked} because of file-lock restrictions. Route the Conda
+cache to the node's local storage before running the installer, and remove the
+bypass afterwards.
+\end{mdframed}
+\begin{lstlisting}[language=bash]
+rm -rf ~/miniconda3/pkgs/cache
+mkdir -p /tmp/pipeline_conda_cache
+ln -s /tmp/pipeline_conda_cache ~/miniconda3/pkgs/cache
+
+./install.sh --conda
+
+rm ~/miniconda3/pkgs/cache && mkdir -p ~/miniconda3/pkgs/cache
+rm -rf /tmp/pipeline_conda_cache
+\end{lstlisting}
+
+\subsection{Astrometry Index Files}
+\textbf{There is nothing to download.} Plate solving matches star patterns
+against pre-computed \emph{index files}, and the pipeline works out which ones a
+field needs and fetches those from the public Astrometry.net server, caching
+them under \texttt{\textasciitilde/.cache/cassa-photometry/astrometry}.
+
+The saving is substantial and is the reason this is worth doing automatically: a
+CASSA 8-inch field requires \textbf{4 files, 165\,MB}, out of roughly 34\,GB the
+server offers --- 0.5\% of the set. Selection is exact rather than approximate:
+the quad-scale range each index holds is matched against the field size, and the
+sky tiles are found by sampling the boundary of the search cone, which correctly
+picks up the neighbouring tile for a pointing near an edge.
+
+To prepare a machine before taking it somewhere without a network, or simply to
+see the cost first:
+\begin{lstlisting}[language=bash]
+cassa-index-fetch --from-headers raw/ --dry-run   # what is needed, and how big
+cassa-index-fetch --from-headers raw/             # fetch it
+\end{lstlisting}
+
+An existing full local set is used in preference and nothing is downloaded:
 \begin{lstlisting}[language=bash]
 export CASSA_ASTROMETRY_INDEX=/path/to/astrometry_data
 \end{lstlisting}
-\end{enumerate}
-\begin{mdframed}[backgroundcolor=procbg, linecolor=secondary, linewidth=1.5pt, roundcorner=4pt]
-\textbf{Choosing an index scale:} Select index files whose scale spans your field of view. Small-FOV instruments (arcminutes) need the low-numbered, finely-scaled series, while wide-field optics use the higher-numbered series. Installing an unnecessarily broad range only slows the solver; it does not change the result.
-\end{mdframed}
 
 \subsection{Verification}
 To ensure all packages and C-compiled binaries built correctly for your specific Linux architecture, run these two tests:
@@ -474,57 +445,245 @@ export CASSA_ASTROMETRY_INDEX=/path/to/astrometry_data   # needed by Phase 2
 \hline
 \texttt{cassa-verify} & --- & Catalog check vs.\ APASS / Pan-STARRS / SDSS \\
 \hline
-\texttt{cassa-run} & 1--3 & All science phases, chained \\
+\texttt{cassa-run} & 1--3 & All science phases, chained (\texttt{-{}-from}/\texttt{-{}-to} to run a subset) \\
 \hline
 \end{tabularx}
 \end{center}
 
-\subsubsection{Running Phase 1 (Instrument Signature Removal)}
-Phase 1 takes an input directory of raw FITS files (\texttt{-i}) and an output directory for the calibrated frames (\texttt{-o}). Each output is a multi-extension FITS file carrying \texttt{SCI}, \texttt{ERR}, and \texttt{DQ} planes (see Part III).
+Every phase command also accepts \texttt{-{}-skip}, \texttt{-{}-only} and
+\texttt{-{}-show-plan}, which select and inspect the steps that phase will run.
+See \hyperref[sec:stepplan]{the reduction plan} below.
+
+\subsubsection{Output Layout}
+Each phase writes into its own directory beneath one work directory, and a
+re-run replaces that phase's products in place rather than accumulating copies.
 \begin{lstlisting}[language=bash]
-cassa-calibrate -i NGC7331_thairobotic/Raw -o NGC7331_thairobotic/cassa_output/calibrated
+work/
+  phase1/   calibrated frames            (cassa-calibrate)
+  phase2/   master stacks + WCS          (cassa-integrate)
+  phase3/   flux-calibrated + catalogs   (cassa-photometry)
+  phase4/   diagnostics report           (cassa-diagnose)
+\end{lstlisting}
+
+\subsubsection{Running Phase 1 (Instrument Signature Removal)}
+Phase 1 takes a directory of raw FITS files (\texttt{-i}) and writes calibrated
+frames (\texttt{-o}). Each output is a multi-extension FITS file carrying
+\texttt{SCI}, \texttt{ERR} and \texttt{DQ} planes (see Part III), and each
+records the delivered PSF it measured as \texttt{FWHMPX}.
+\begin{lstlisting}[language=bash]
+cassa-calibrate -i data/raw -o data/work/phase1 --instrument cassa8
 \end{lstlisting}
 
 \subsubsection{Running Phase 2 (Integration \& Astrometry)}
-Phase 2 ingests the calibrated frames, buckets them by target/filter/camera, stacks them with inverse-variance weighting, and plate-solves the result. It writes each master stack into a timestamped \texttt{RunNN\_*} sub-directory. Use \texttt{--yes} for non-interactive runs and \texttt{--keep-temps} to retain solver scratch files.
+Phase 2 groups the calibrated frames by target, filter, camera, exposure and
+\emph{observing night}, stacks each group with inverse-variance weighting, and
+plate-solves the result. Use \texttt{-{}-yes} for non-interactive runs and
+\texttt{-{}-keep-temps} to retain solver scratch files.
 \begin{lstlisting}[language=bash]
-cassa-integrate NGC7331_thairobotic/cassa_output/calibrated --yes
+cassa-integrate data/work/phase1 --yes
 \end{lstlisting}
 
+Nights are binned on \emph{local} noon rather than the UT date, because an
+observing night crosses UT midnight at most longitudes and binning on the date
+string would cut one night into two half-depth masters. Set
+\texttt{phase2.epoch\_bin} to \texttt{none} to group all dates together, or to a
+duration such as \texttt{"6h"} for sub-night bins.
+
 \subsubsection{Running Phase 3 (Photometry \& Zero Point)}
-Phase 3 processes every master stack in the run directory: it cross-matches detected stars against reference catalogs, derives a filter-wise zero point with uncertainty, writes a flux-calibrated image and an error-carrying source catalog. It requires network access for the catalog queries.
+Phase 3 processes every master stack: it detects sources, cross-matches against
+reference catalogs, derives a filter-wise \emph{total-flux} zero point with an
+uncertainty, and writes a flux-calibrated image and an error-carrying catalog.
+The first run for a field needs network access; results are cached, after which
+\texttt{-{}-offline} works.
 \begin{lstlisting}[language=bash]
-cassa-photometry NGC7331_thairobotic/cassa_output/calibrated/Run01_*/
+cassa-photometry data/work/phase2
+cassa-photometry data/work/phase2 --offline    # cache only, no network
 \end{lstlisting}
 
 \subsubsection{Running Phase 4 (Diagnostics)}
-Phase 4 validates the pipeline stage-by-stage. Point it at the Phase 2 run directory (it auto-discovers the calibrated, master, and catalog products) and supply the raw directory with \texttt{--raw} for the stage-0 checks. It writes \texttt{diagnostics/diagnostics\_report.pdf}, per-stage PNGs, a \texttt{metrics.json}, and a health summary.
+Phase 4 validates the pipeline stage by stage. Point it at the Phase 2
+directory --- it discovers the calibrated, master and catalog products from the
+sibling phase directories, pairing them by filter --- and supply the raw
+directory with \texttt{-{}-raw} for the stage-0 checks. It writes
+\texttt{diagnostics\_report.pdf}, per-stage PNGs, a \texttt{metrics.json} and a
+health summary.
 \begin{lstlisting}[language=bash]
-cassa-diagnose NGC7331_thairobotic/cassa_output/calibrated/Run01_*/ \
-    --raw NGC7331_thairobotic/Raw
+cassa-diagnose data/work/phase2 --raw data/raw
 \end{lstlisting}
 
 \subsubsection{End-to-End and Verification}
-\texttt{cassa-run} executes Phases 1--3 in sequence, and \texttt{cassa-verify} independently checks the output catalog against global reference catalogs:
 \begin{lstlisting}[language=bash]
 # Chained: calibrate -> integrate -> photometry
-cassa-run -i NGC7331_thairobotic/Raw -o NGC7331_thairobotic/cassa_output/calibrated
+cassa-run -i data/raw -o data/work --instrument cassa8
 
 # Independent photometric sanity check
-cassa-verify NGC7331_thairobotic/cassa_output/calibrated/Run01_*/
+cassa-verify data/work/phase3
 \end{lstlisting}
 
+\subsubsection{Simulated Data with Known Truth}
+The pipeline can generate a complete observing run whose true answers are known,
+which is the only rigorous way to establish that a reduction is correct rather
+than merely plausible.
+\begin{lstlisting}[language=bash]
+cassa-simulate --preset workshop --out sim
+cassa-run -i sim/raw -o sim/work --instrument cassa8
+\end{lstlisting}
+The dataset is distributed as a \emph{seed rather than a download}: the same
+command produces bit-identical frames anywhere. It writes
+\texttt{truth\_sources.csv} (every source's true magnitude),
+\texttt{truth\_frames.csv} (every frame's true seeing, transparency, airmass and
+zero point) and \texttt{truth\_config.yaml}. The star field is real --- Gaia DR3
+positions with synthetic Johnson-Cousins magnitudes --- so the frames genuinely
+plate-solve and the reference-catalog cross-match genuinely finds the stars.
+
 \subsubsection{Configuration Overrides}
-Every tunable parameter (cosmic-ray thresholds, stacking sigma-clip, aperture radii, zero-point match tolerance, saturation level, \dots) has a documented default in \texttt{cassa\_photometry.config}. Any subset can be overridden with a YAML file passed via \texttt{--config}:
+Every tunable parameter has a documented default in
+\texttt{cassa\_photometry.config}, and any subset can be overridden with a YAML
+file passed via \texttt{-{}-config}. Values are validated: a wrong type or a
+mistyped key is reported against its full dotted path rather than silently
+ignored.
 \begin{lstlisting}[language=bash]
 # my_config.yaml
+#   instrument: cassa8
 #   phase1:
-#     saturation_adu: 60000
+#     steps: {cosmic_rays: false}    # skip a step; recorded as CALSKIP
+#     saturation_adu: 60000          # fallback; the profile wins if it knows
+#   phase2:
+#     epoch_bin: night               # none | night | "6h"
+#     stack_weight: point_source     # point_source | extended
 #   phase3:
-#     fwhm: 4.0
-#     zp_sigma_clip: 2.5
-cassa-photometry NGC7331_thairobotic/cassa_output/calibrated/Run01_*/ --config my_config.yaml
+#     offline: false                 # reference catalogs from cache only
+cassa-photometry data/work/phase2 --config my_config.yaml
 \end{lstlisting}
+
+\begin{sloppypar}
+Describing a camera the pipeline ships no profile for needs no code either ---
+see \texttt{docs/CUSTOMIZING.md} in the repository.
+\end{sloppypar}
+
+\subsubsection{The Reduction Plan: Excluding, Reordering and Extending}
+\label{sec:stepplan}
+By default every phase runs every one of its steps, in the canonical order
+described in Part III. A user who writes no configuration therefore sees the
+standard reduction and nothing else. Customisation is expressed as a
+\textbf{step plan}: each phase declares an ordered list of named steps, and the
+\texttt{steps:} block chooses which of them run and in what sequence.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\textbf{Phase} & \textbf{Steps} \\
+\hline
+\texttt{phase1} & \texttt{linearity}, \texttt{overscan}, \texttt{bad\_pixel\_mask}, \texttt{bias}, \texttt{dark}, \texttt{flat}, \texttt{cosmic\_rays}, \texttt{measure\_fwhm} \\
+\hline
+\texttt{phase2} & \texttt{subtract\_background}, \texttt{align}, \texttt{stack}, \texttt{solve\_wcs}, \texttt{measure\_fwhm}, \texttt{visual\_qa} \\
+\hline
+\texttt{phase3} & \texttt{aperture\_correction}, \texttt{zero\_point}, \texttt{flux\_calibration}, \texttt{catalog}, \texttt{psf\_photometry}, \texttt{classification} \\
+\hline
+\texttt{phase4} & \texttt{stage\_0\_raw}, \texttt{stage\_1\_calibrated}, \texttt{stage\_2\_master}, \texttt{stage\_3\_photometry} \\
+\hline
+\end{tabularx}
+\end{center}
+
+\begin{lstlisting}[language=bash]
+# my_config.yaml
+phase1:
+  steps:
+    cosmic_rays: false        # boolean form (unchanged)
+    exclude: [bad_pixel_mask] # list form; equivalent
+    # Reject cosmic rays BEFORE flat fielding rather than after:
+    order: [linearity, overscan, bad_pixel_mask, bias, dark,
+            cosmic_rays, flat, measure_fwhm]
+phase3:
+  steps:
+    custom:                   # your own step, no fork required
+      write_bright_list: local/my_steps.py:write_bright_list
+    order: [aperture_correction, zero_point, flux_calibration,
+            catalog, psf_photometry, classification, write_bright_list]
+\end{lstlisting}
+
+\paragraph{Order is validated, not merely accepted.} Each step declares what it
+\emph{requires} and what it \emph{provides}. If a step needs what another
+included step produces, it must follow it, and an order that violates this is
+refused when the configuration is read --- not three hours into a reduction:
+\begin{lstlisting}[language=bash]
+error: phase1.steps.order: 'flat' is placed before 'dark', but it needs
+what that step produces ('dark_subtracted'). Move 'dark' earlier, or
+exclude it if you do not want it at all.
+\end{lstlisting}
+This strictness is deliberate. Order is not a free choice: overscan changes the
+array geometry so nothing may precede it, and bias $\rightarrow$ dark
+$\rightarrow$ flat is physics rather than preference. Flat-fielding before bias
+subtraction yields a plausible but \emph{silently wrong} image --- the same
+failure mode that \texttt{CALSKIP}, \texttt{CRVETO} and the pre-calibrated-frame
+guard exist to prevent.
+
+Equally, the pipeline does not over-constrain. Where two orders are both
+defensible no dependency links them and either is accepted: cosmic-ray rejection
+before or after flat fielding, background subtraction before or after
+registration, and the aperture correction before or after the zero point.
+
+\paragraph{Excluding a step is always legal}, even one that others build on. If
+nothing provides a quantity, nothing requires it --- so omitting \texttt{bias}
+leaves \texttt{dark} and \texttt{flat} running, which is exactly what reducing
+frames that were partly reduced elsewhere needs.
+
+\paragraph{A few steps can be switched off but not moved.}
+\begin{sloppypar}
+\texttt{phase3.psf\_photometry}, \texttt{phase3.classification},
+\texttt{phase3.aperture\_correction} and \texttt{phase2.measure\_fwhm} run
+\emph{inside} another step rather than beside it, so there is no seam to move
+them to. An \texttt{order} that moves them is refused rather than silently
+ignored.
+\end{sloppypar}
+
+\paragraph{Custom steps.}
+\begin{sloppypar}
+A step is a plain function taking keyword arguments;
+setting \texttt{requires}/\texttt{provides} on it joins the same dependency
+graph, so a bad placement is a load-time error instead of an empty output file.
+Phase 3 passes \texttt{engine}, \texttt{path}, \texttt{outdir}, \texttt{base},
+\texttt{logger}; phase 1 passes \texttt{ccd}, \texttt{meta}, \texttt{state},
+\texttt{logger}. Worked examples ship in
+\texttt{examples/steps/my\_steps.py}. Because the file is one upstream does not
+have, \texttt{git pull} keeps merging cleanly.
+\end{sloppypar}
+
+\subsubsection{Plan Control from the Command Line}
+Every phase command accepts \texttt{-{}-skip}, \texttt{-{}-only} and
+\texttt{-{}-show-plan}, which override the configuration file.
+\texttt{cassa-run} additionally accepts \texttt{-{}-from} and \texttt{-{}-to}.
+\begin{lstlisting}[language=bash]
+cassa-run -i data/raw -o data/work --show-plan     # print the plan, reduce nothing
+cassa-calibrate -i raw -o work --skip cosmic_rays --skip flat
+cassa-integrate work/phase1 --only stack
+cassa-run -i raw -o work --from 2 --to 3           # resume; do not recalibrate
+\end{lstlisting}
+\texttt{-{}-show-plan} is the one to reach for first: it prints the resolved
+order with every exclusion and insertion marked, so a customisation can be
+checked \emph{before} a night's data is committed to it. On \texttt{cassa-run} a
+step name that exists in two phases (\texttt{measure\_fwhm}) must be qualified as
+\texttt{phase2.measure\_fwhm}; an ambiguous name is an error rather than a guess.
+
+\subsubsection{Every Product Records Its Own Plan}
+A customised reduction must never be mistakable for a default one after the
+fact, so what ran --- and what did not --- is written into the products
+themselves.
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\textbf{Product} & \textbf{Records} \\
+\hline
+Phase 1 \texttt{calibrated\_*.fits} & \texttt{CALPLAN} (steps run, in order), \texttt{CALSKIP} (steps deliberately skipped) \\
+\hline
+Phase 2 \texttt{Master\_*.fits} & \texttt{STEPPLAN}, \texttt{STEPSKIP} \\
+\hline
+Phase 3 \texttt{*\_fluxcal.fits} & \texttt{STEPPLAN}, \texttt{STEPSKIP} \\
+\hline
+Phase 4 \texttt{metrics.json} & \texttt{step\_plans} --- the resolved plan of all four phases \\
+\hline
+\end{tabularx}
+\end{center}
 
 \newpage
 
@@ -673,6 +832,8 @@ Phase 1 relies on constructing high Signal-to-Noise Ratio (SNR) master calibrati
 \begin{itemize}[leftmargin=*]
     \item \textbf{Process:} Raw dark frames capture the "Thermal Noise" that accumulates in the silicon matrix over time, even with the shutter closed.
     \item \textbf{Mathematics:} The pipeline subtracts the newly generated \textbf{Master Bias} from each individual Raw Dark frame. This ensures we are isolating purely thermal current and not double-counting read noise. The bias-subtracted darks are then median-combined along the Z-axis to reject transients, outputting the clean \textbf{Master Dark}.
+    \item \textbf{Recorded Provenance:} The master carries its own \texttt{EXPTIME}, gain, combine count, and a \texttt{BIASSUB} flag in its header. Downstream stages therefore never have to \emph{assume} what the master represents --- the dark-subtraction step reads the exposure back rather than guessing it from the science frame (\hyperref[app:dark]{Appendix A.6}).
+    \item \textbf{Mixed Exposures:} If the input directory holds darks of several exposure times, they are normalised to a common exposure before combining rather than being averaged incoherently. This is legitimate only once the bias pedestal is gone, which is why it is conditional on a Master Bias being available.
 \end{itemize}
 
 \subsubsection{Master Flat Generation (Subtract, Normalize, Median Combine)}
@@ -680,23 +841,29 @@ Phase 1 relies on constructing high Signal-to-Noise Ratio (SNR) master calibrati
     \item \textbf{Process:} Raw flats map the physical optical imperfections of the telescope (vignetting, dust donuts). 
     \item \textbf{Mathematics:} 
     \begin{enumerate}
-        \item \textbf{Subtraction:} The Master Bias and Master Dark are subtracted from every raw flat to remove their electronic and thermal signatures.
+        \item \textbf{Subtraction:} The Master Bias and Master Dark are subtracted from every raw flat to remove their electronic and thermal signatures. The dark is rescaled from its own exposure to the (typically much shorter) flat exposure first. This correction is negligible for a few-second flat on a cold detector, but it is not safe to skip in general: a warm detector or a long sky flat accumulates real dark current, which would otherwise be normalised into the flat and then divided back out of every science frame.
         \item \textbf{Normalization:} The scalar median ADU (Analog-to-Digital Unit) value of the subtracted flat is calculated. The entire 2D matrix is then divided by this scalar value. This forces the array's average background to center around $1.0$.
         \item \textbf{Combination:} The normalized frames are median-combined, producing an "Optical Map" of percentage-based multipliers. (\textit{See \hyperref[app:flat]{Appendix A.2 for a detailed breakdown of the normalization mathematics}})
     \end{enumerate}
 \end{itemize}
 
 \subsection{The Science Processing Flow}
-Raw science frames are fed through the \texttt{UniversalProcessor} and subjected to a strict sequence of mathematical corrections. The very first act is to \emph{seed} the error budget; from that point on the \texttt{ERR} plane is carried through every step automatically:
+Raw science frames are fed through the \texttt{UniversalProcessor} and subjected to a strict sequence of mathematical corrections. The very first act is to \emph{seed} the error budget; from that point on the \texttt{ERR} plane is carried through every step automatically.
+
+The sequence below is the \emph{default} plan, and is what runs unless a
+configuration says otherwise. Each numbered correction is a named step that can
+be excluded, resequenced where the dependency graph permits, or joined by a step
+of your own (\hyperref[sec:stepplan]{see Part II}); the frame records the plan it
+actually received as \texttt{CALPLAN}, and anything omitted as \texttt{CALSKIP}.
 \begin{enumerate}
     \item \textbf{Error Budget Seeding:} As each raw frame is loaded, the pipeline attaches a $1\sigma$ uncertainty computed from the detector gain and read noise, $\sigma_{\mathrm{ADU}} = \sqrt{g\,I + \sigma_R^2}\,/\,g$ (Poisson photon noise plus read noise; \texttt{ccdproc.create\_deviation}). A saturation mask is also recorded from the raw ADU values for later DQ flagging. (\textit{See \hyperref[app:errbudget]{Appendix A.12}})
     \item \textbf{Overscan Correction (Conditional):} If the sensor has an unilluminated overscan region, the engine calculates the median row-by-row noise floor and subtracts it to correct for amplifier drift during readout. Because these extreme edge pixels are physically masked from light, they record the exact baseline electronic noise present at the fraction of a second that specific row is processed. Subtracting this unique median from each row completely eliminates horizontal banding caused by the camera's amplifier heating up or fluctuating during the download sequence. (\textit{See \hyperref[app:overscan]{Appendix A.3 for a deep dive into banding correction}})
     \item \textbf{Bias Subtraction:} The Master Bias (Static Noise) is subtracted from the science frame; its uncertainty adds in quadrature to the \texttt{ERR} plane.
-    \item \textbf{Dark Subtraction:} The Master Dark (Thermal Noise) is subtracted from the science frame. The pipeline strictly enforces a 1:1 exposure match (\texttt{scale=False}) to preserve non-linear thermal structures. (\textit{See \hyperref[app:dark]{Appendix A.6 for the physics of dark scaling}})
+    \item \textbf{Dark Subtraction:} The Master Dark (Thermal Noise) is subtracted from the science frame. The pipeline compares the master's \emph{recorded} exposure against the science frame's: when they match --- the preferred case --- the dark is subtracted unscaled, preserving non-linear thermal structures exactly. When they differ, it is rescaled by the exposure ratio and the mismatch is logged, rather than the wrong amount being subtracted silently. (\textit{See \hyperref[app:dark]{Appendix A.6 for the physics of dark scaling}})
     \item \textbf{Flat Division:} The image matrix is divided pixel-by-pixel by the normalized Master Flat, which mathematically brightens vignetted corners and erases dust shadows. The flat's relative uncertainty propagates into \texttt{ERR}.
     \item \textbf{Cosmic Ray Rejection:} The pipeline executes the \texttt{astroscrappy} Laplacian edge-detection algorithm. By analyzing the specific Gain and Read Noise of the camera, it differentiates legitimate point-sources (stars) from high-energy cosmic ray strikes, masking and interpolating the damaged pixels; the affected pixels are flagged in the \texttt{DQ} plane. (\textit{See \hyperref[app:cosmic]{Appendix A.4 for the underlying mathematics of the Laplacian filter}})
     \item \textbf{Gain Correction:} The final 2D matrix is multiplied by the hardware gain. This converts the data \emph{and its uncertainty} from arbitrary ADUs into true, physical Electrons ($e^-$), and the \texttt{BUNIT} FITS header is updated accordingly. (\textit{See \hyperref[app:adapter]{Appendix A.1 for how hardware metadata is safely extracted}})
-    \item \textbf{DQ Assembly \& Output:} A single integer \texttt{DQ} bitmask is assembled from the saturation mask, the flat-derived Bad-Pixel Mask (BPM), the cosmic-ray mask, and any NaN/no-data pixels. The calibrated frame is written as a multi-extension FITS file with \texttt{SCI} (electrons), \texttt{ERR} ($1\sigma$), and \texttt{DQ} planes. (\textit{See \hyperref[app:bpm]{Appendix A.5 for BPM generation} and \hyperref[app:dqmask]{Appendix A.13 for the bitmask}})
+    \item \textbf{DQ Assembly \& Output:} A single integer \texttt{DQ} bitmask is assembled from the saturation mask, the Bad-Pixel Mask (BPM, derived from \emph{all} available masters --- see \hyperref[app:bpm]{Appendix A.5}), the cosmic-ray mask, and any NaN/no-data pixels. The calibrated frame is written as a multi-extension FITS file with \texttt{SCI} (electrons), \texttt{ERR} ($1\sigma$), and \texttt{DQ} planes. (\textit{See \hyperref[app:bpm]{Appendix A.5 for BPM generation} and \hyperref[app:dqmask]{Appendix A.13 for the bitmask}})
 \end{enumerate}
 
 \newpage
@@ -803,6 +970,25 @@ Instead of randomly picking an alignment reference, the pipeline extracts a 2D b
     \item \textbf{Propagated Master \texttt{ERR}:} The variance of the weighted mean, $\mathrm{Var} = \sum w_i^2\,\sigma_i^2 / (\sum w_i)^2$ over the surviving frames, is \emph{materialized} as the master's \texttt{ERR} plane rather than merely logged. A pixel's \texttt{DQ} is flagged where no frame contributed (NaN). The historical fixed ``$+100$ ADU'' display pedestal has been removed, so the stack remains on a physical electron scale suitable for absolute photometry.
 \end{itemize}
 
+\subsubsection{When Integration Steps Are Switched Off}
+Three of Phase 2's steps change \emph{what is produced} rather than merely
+whether a correction is applied, and are worth stating explicitly.
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{\texttt{subtract\_background: false}} --- the sky level is still measured and recorded as \texttt{BKGLEVEL}, but is left in the data. This is the setting for extended sources: the 2D background model follows large-scale structure, so on a resolved galaxy it removes the outer disk along with the sky. It is on by default because it is what makes registration and stacking well behaved.
+    \item \textbf{\texttt{align: false}} --- frames are combined on the pixel grid they already share, which is valid for a well-tracked mount observing without dither. A frame of a different shape is then an error rather than something to resample away. Because the transparency scale is measured from stars \emph{matched between} two frames, and matching is a by-product of solving for the transform, no registration means no flux normalisation: the scale stays $1.0$. In variable transparency that is a real loss of accuracy, which is why alignment is on by default.
+    \item \textbf{\texttt{stack: false}} --- Phase 2 still aligns and plate-solves, but writes each registered frame as \texttt{Aligned\_<group>\_NNNofM.fits} (with \texttt{SCI}/\texttt{ERR}/\texttt{DQ}) instead of one combined master. The time axis therefore survives into Phase 3, which is what a light curve needs: stacking a night of a variable star averages away the very signal being measured. Only the anchor is plate-solved --- with registration on, every frame shares its pixel grid \emph{by construction}, so one solution is the solution for all of them --- and \texttt{min\_frames\_to\_stack} does not apply, because it is a threshold for rejecting outliers in a combine that is not happening.
+\end{itemize}
+
+\begin{sloppypar}
+The master records the plan it received as \texttt{STEPPLAN} and anything omitted
+as \texttt{STEPSKIP}, so a partially-integrated stack cannot pass for a finished
+one. Of Phase 2's steps, \texttt{subtract\_background} and \texttt{align} may be
+ordered either way round; the remainder are pinned by their dependencies, and
+\texttt{measure\_fwhm} is fixed by control flow because it is measured on the
+master and written into its header.
+\end{sloppypar}
+
 \subsection{Astrometry Engine}
 \subsubsection{Plate Solving \& Rescue Pass}
 \begin{itemize}[leftmargin=*]
@@ -810,6 +996,51 @@ Instead of randomly picking an alignment reference, the pipeline extracts a 2D b
     \item \textbf{Rescue Pass:} Narrowband images (like H-Alpha) often lack enough stars to plate-solve. If a solve fails, the engine borrows the exact Right Ascension and Declination from a successfully solved filter within the same \texttt{TargetGroup}, executing a forced local search to rescue the astrometry. (\textit{See \hyperref[app:wcs]{Appendix A.11 for plate solving optimization}})
     \item \textbf{Error-Plane Preservation:} \texttt{solve-field} only understands a single-image FITS and drops extra extensions from its output. The \texttt{WCSSolver} therefore solves on the \texttt{SCI} plane, then re-attaches the \texttt{ERR} and \texttt{DQ} planes to the WCS-solved result --- so the master remains a full three-plane multi-extension file after astrometry.
 \end{itemize}
+
+
+\subsection{Data Quality Through the Stack}
+The master's \texttt{DQ} plane is built from the contributing frames' own
+\texttt{DQ} planes, resampled with the data so a flagged pixel remains flagged
+in the master's frame of reference, and flagged pixels are excluded from the
+combine rather than averaged in as good data. A bit survives when \emph{every}
+contributing frame carried it: a saturated stellar core is saturated in all of
+them and stays flagged, whereas a static detector defect lands on different sky
+in each dithered frame and is covered by the others --- which is what dithering
+is for. \texttt{DQ\_REJECTED} marks pixels where some frames were rejected, and
+\texttt{DQ\_NO\_DATA} those no frame covered.
+
+This matters downstream rather than cosmetically: without it, no quality cut in
+Phase 3 can do anything, because the flags it would cut on do not exist.
+
+\subsection{Epochs}
+Frames are grouped by target, filter, camera, exposure \emph{and observing
+night}, so several nights of the same field produce one master per night rather
+than a single stack with the time axis averaged away. Nights are binned on
+\textbf{local} noon: an observing night crosses UT midnight at most longitudes,
+and binning on the UT date string would cut one night into two half-depth
+masters differing in nothing but which side of midnight they fell.
+\texttt{SITELONG} is what converts UT into local solar time; without it the
+pipeline falls back to a UT boundary and says so.
+
+\subsection{Weighting and Frame Selection}
+The anchor frame sets both the astrometric reference and the flux scale every
+other frame is normalised to, so it is chosen on depth \emph{and} sharpness ---
+ranking on signal-to-noise alone lets a bright, soft frame win and blurs the
+whole stack. Frames far softer than the group median are rejected outright, and
+the count is recorded as \texttt{NFWHMREJ}.
+
+Stacking weights are $1/(\sigma\,\mathrm{FWHM})^2$ by default. The familiar
+$1/\sigma^2$ is optimal for \emph{extended} flux; a point source's
+signal-to-noise goes as $1/(\sigma\,\mathrm{FWHM})$, because worse seeing
+spreads the same flux over more pixels. Two frames of equal background noise but
+$1.5\times$ different seeing should not contribute equally. Set
+\texttt{phase2.stack\_weight} to \texttt{extended} for surface photometry.
+
+The frame-to-frame transparency scale is measured from \emph{integrated aperture
+fluxes}, not peak pixels. A Moffat's peak scales as $1/\mathrm{FWHM}^2$, so a
+peak-pixel ratio reads a change in seeing as a change in transparency: on a
+synthetic $1.5\times$ seeing change, where the truth is $1.000$, the peak-pixel
+estimate returns $2.250$ and aperture photometry returns $1.012$.
 
 \newpage
 
@@ -854,27 +1085,164 @@ Instead of randomly picking an alignment reference, the pipeline extracts a 2D b
 \newpage
 
 \section{Phase 3: Photometry, Zero Point \& Catalogs}
-\textbf{Core Objective:} To place the deep master stacks on a physical, filter-wise photometric scale --- deriving a zero point \emph{with a formal uncertainty}, converting pixels to Janskys, and producing a source catalogue in which every magnitude carries an error bar.
+\textbf{Core Objective:} To place the deep master stacks on a physical,
+filter-wise photometric scale --- deriving a \emph{total-flux} zero point with a
+formal uncertainty, converting pixels to Janskys per pixel, and producing a
+source catalogue in which every magnitude carries an error bar and states which
+photometric system it is on.
 
 \subsection{Reference-Catalog Cross-Match}
 \subsubsection{Priority Cascade}
-The engine reads the WCS to convert detected star positions into sky coordinates, then queries global reference catalogues in a filter-aware priority cascade: \textbf{APASS} (Johnson $B$/$V$ and Sloan $g'/r'/i'$, ideal for small-telescope depths), falling back to \textbf{Pan-STARRS DR2} and then \textbf{SDSS DR12}. The first catalogue to return valid stars for the requested band wins, and its per-star magnitude \emph{and its uncertainty} are standardised into a common table. (\textit{See \hyperref[app:zeropoint]{Appendix A.14 for the zero-point mathematics}})
+The engine reads the WCS to convert detected star positions into sky
+coordinates, then queries reference catalogues in a filter-aware cascade:
+\textbf{Gaia DR3 synthetic photometry} first, falling back to \textbf{APASS},
+\textbf{Pan-STARRS DR2} and \textbf{SDSS DR12}.
+
+Gaia leads for a specific reason. It supplies Johnson-Cousins \emph{and} SDSS
+magnitudes for the same stars, so a Johnson $R$ filter is calibrated against
+Johnson $R$ rather than against Sloan $r'$. Measured on real stars in the
+NGC~7331 field, that mismatch is $-0.21 \pm 0.036$~mag --- a systematic several
+times the pipeline's own zero-point uncertainty, and it affected two of the five
+supported bands. Gaia is also all-sky and uniform, where APASS carries
+field-to-field structure of a few hundredths of a magnitude.
+
+Every successful query is cached on disk, so a field reduced once can be
+re-reduced with no network at all.
 
 \subsection{Filter-Wise Zero Point}
 \subsubsection{Differential Photometry with Uncertainty}
 \begin{itemize}[leftmargin=*]
-    \item \textbf{Instrumental Measurement:} For each catalogue-matched star the engine performs aperture photometry using the \texttt{ERR} plane, yielding an instrumental magnitude and its error, $\delta m_{\mathrm{inst}} = 1.0857\,\delta F / F$.
-    \item \textbf{Per-Star Offset:} Each star gives a zero-point estimate $\mathrm{ZP}_i = m_{\mathrm{cat}} - m_{\mathrm{inst}}$, with an uncertainty combining the instrumental and catalogue errors in quadrature.
-    \item \textbf{Robust Combination:} The per-star offsets are sigma-clipped and combined with an inverse-variance weighted mean. The pipeline records \texttt{MAGZERO}, the zero-point uncertainty \texttt{MAGZERR} (the larger of the formal weighted error and the standard error of the surviving scatter), and \texttt{NZPSTARS} in the FITS header --- one zero point per filter, each with a defensible error bar.
+    \item \textbf{Aperture sizing.} Apertures are sized from \texttt{FWHMPX},
+    the delivered PSF measured from the stars in the frame itself. A fixed
+    aperture regardless of the seeing is worth up to 0.3~mag of per-epoch error
+    in the zero point --- exactly the quantity a light curve cannot tolerate.
+    Note that this is \emph{not} the \texttt{SEEING} card: that is the DIMM's
+    zenith-corrected atmospheric seeing at a reference wavelength, and the
+    delivered PSF is larger by the airmass, wavelength, guiding and optics
+    terms. Sizing apertures from it would under-size them by roughly 30\%.
+    \item \textbf{Calibrator quality.} Stars with a saturated, bad or
+    cosmic-ray pixel inside the aperture are rejected --- the brightest
+    catalogue stars saturate first and are exactly the ones inverse-variance
+    weighting trusts most. Matching is mutually nearest, within a radius derived
+    from the astrometric residual \texttt{ASTRMS} rather than a fixed tolerance.
+    \item \textbf{Instrumental Measurement:} aperture photometry against the
+    \texttt{ERR} plane, with a sigma-clipped \emph{median} background annulus
+    placed outside the PSF wings, giving an instrumental magnitude
+    \emph{per second} and its error $\delta m = 1.0857\,\delta F / F$.
+    \item \textbf{Per-Star Offset:} each star gives
+    $\mathrm{ZP}_i = m_{\mathrm{cat}} - m_{\mathrm{inst}}$, with an uncertainty
+    combining the instrumental and catalogue errors in quadrature.
+    \item \textbf{Robust Combination:} sigma-clipped, then an inverse-variance
+    weighted mean. \texttt{MAGZERO}, \texttt{MAGZERR} and \texttt{NZPSTARS} are
+    recorded in the header.
 \end{itemize}
 
+\subsubsection{Aperture Correction}
+An aperture never catches all of a star's light. The correction from the
+aperture's flux scale to a total one is measured per frame from a
+\textbf{curve of growth} on bright, isolated, unsaturated stars, and
+\texttt{MAGZERO} becomes a total-flux zero point.
+
+The correction is not a constant across the field. An 8-inch $f/5$ Newtonian has
+coma, so its PSF broadens off-axis --- the pipeline's own measured FWHM is 14\%
+larger averaged over the field than at the centre. Where enough stars support
+it, the correction is fitted as a low-order \emph{surface} and applied per
+source; where they do not, a scalar is used and its measured spread is folded
+into \texttt{MAGZERR} rather than discarded. An honest error bar beats a precise
+wrong number.
+
 \subsection{Products}
-\subsubsection{Flux Calibration \& Catalog}
-\begin{itemize}[leftmargin=*]
-    \item \textbf{Flux-Calibrated Image:} Pixels are converted to Janskys via the AB relation $F_\nu = 3631 \times 10^{-\mathrm{ZP}/2.5}$; the \texttt{ERR} plane is scaled by the same factor and preserved.
-    \item \textbf{Source Catalog:} A deblended segmentation catalogue is measured with the \texttt{ERR} plane, exposing \texttt{Flux\_Error}, \texttt{Mag\_Error} $=\sqrt{(1.0857\,\delta F/F)^2 + \mathrm{MAGZERR}^2}$, \texttt{SNR}, and DQ \texttt{FLAGS} columns alongside positions, magnitudes, and shape parameters.
-    \item \textbf{Verification:} The independent \texttt{cassa-verify} tool re-queries reference catalogues and reports the residual offset and scatter, confirming the reported \texttt{MAGZERR} is realistic.
-\end{itemize}
+\subsubsection{Flux Calibration}
+Pixels are converted with the AB relation
+$F_\nu = 3631 \times 10^{-\mathrm{ZP}_{\mathrm{AB}}/2.5}$, where
+$\mathrm{ZP}_{\mathrm{AB}}$ includes the band's AB$-$Vega offset: $B$, $V$, $R$
+and $I$ are calibrated against Vega-based magnitudes, and feeding one through the
+AB relation unchanged is wrong by up to 8.6\%. The unit is \texttt{Jy/pixel} ---
+the scaling is per pixel, and a source's flux is the sum over its pixels. The
+header records \texttt{PHOTSYS}, \texttt{ABOFFSET}, \texttt{APCOR},
+\texttt{EXPNORM} and \texttt{CALVERS}, so a product states its own calibration
+vintage and mixed vintages are detectable rather than silently combined. It also
+records \texttt{STEPPLAN} and \texttt{STEPSKIP} --- Phase 3's resolved plan. The
+catalog is a CSV and cannot carry header cards, so the flux-calibrated image is
+where the phase's plan is on record.
+
+\begin{sloppypar}
+Measuring the zero point and \emph{writing} this image are separate steps
+(\texttt{zero\_point} and \texttt{flux\_calibration}). Switching the latter off
+still measures and records the zero point the catalog needs, while omitting a
+full-size copy of the frame that a user working from catalogs alone has no use
+for. Switching off \texttt{classification} omits the \texttt{CLASS} and
+\texttt{CLASS\_STAR} columns rather than filling them with a placeholder, and
+\texttt{MAG\_BEST} then falls back to Kron for every source --- so a downstream
+cut on \texttt{CLASS} fails loudly instead of silently selecting nothing.
+\end{sloppypar}
+
+\subsubsection{Source Catalog: which magnitude to use}
+A deblended segmentation catalogue is measured against the \texttt{ERR} plane,
+and several magnitudes are reported because they measure different things:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\textbf{Column} & \textbf{What it is} \\
+\hline
+\texttt{MAG\_BEST} & PSF for point sources, Kron for extended --- \textbf{the default choice}. \\
+\hline
+\texttt{MAG\_PSF} & PSF-fitted; the matched filter for a star. \\
+\hline
+\texttt{MAG\_AUTO} & Kron elliptical, the standard total magnitude for a galaxy. \\
+\hline
+\texttt{MAG\_APER} & Measured in the zero point's own aperture; exactly consistent with \texttt{MAGZERO}. \\
+\hline
+\texttt{MAG\_ISO} & \textbf{Isophotal} --- flux above the detection threshold. Retained for compatibility. \\
+\hline
+\end{tabularx}
+\end{center}
+
+\texttt{MAG\_ISO} is not a total magnitude. It captures a
+\emph{brightness-dependent} fraction of a source, so applying an
+aperture-derived zero point to it tilts the magnitude scale rather than
+offsetting it. Measured against simulated data with known truth, for stars
+brighter than 16.5:
+
+\begin{center}
+\begin{tabular}{|l|r|r|r|}
+\hline
+\textbf{Column} & \textbf{Median error} & \textbf{Scatter} & \textbf{Trend} \\
+\hline
+\texttt{MAG\_BEST} & $+0.034$ & $0.091$ & $+0.004$ mag/mag \\
+\hline
+\texttt{MAG\_APER} & $-0.006$ & $0.110$ & $-0.011$ mag/mag \\
+\hline
+\texttt{MAG\_ISO}  & $+0.531$ & $0.546$ & $\mathbf{+0.348}$ mag/mag \\
+\hline
+\end{tabular}
+\end{center}
+
+\texttt{MAG\_ISO}'s error runs from $+0.18$~mag at $V=12$ to $+1.70$~mag at
+$V=16.5$.
+
+\subsubsection{Star/Galaxy Separation}
+Sources are classified from $\texttt{MAG\_PSF} - \texttt{MAG\_AUTO}$ ---
+\emph{concentration} --- against the frame's own stellar locus, which is
+calibrated per frame so the threshold adapts to each night's seeing with no
+training data and no runtime catalogue dependency. \texttt{CLASS} takes the
+values \texttt{STAR}, \texttt{EXTENDED}, \texttt{AMBIGUOUS}, \texttt{SATURATED}
+and \texttt{EDGE}, with a continuous \texttt{CLASS\_STAR} alongside.
+
+\texttt{AMBIGUOUS} is the honest answer below the signal-to-noise at which the
+locus separation falls under its own scatter; the magnitude at which that
+happens is reported as \texttt{CLASSLIM} rather than pretending to classify to
+the detection limit. A field too sparse to define a locus returns
+\texttt{AMBIGUOUS} for everything with a warning --- never a silent fixed cut.
+This matters beyond the catalogue column: the zero point is restricted to
+\texttt{CLASS == STAR}, and a galaxy leaking into it biases every magnitude in
+the frame.
+
+\subsubsection{Verification}
+The independent \texttt{cassa-verify} tool re-queries reference catalogues and
+reports the residual offset and scatter with both error bars, confirming that
+the reported \texttt{MAGZERR} is realistic.
 
 \newpage
 
@@ -933,7 +1301,16 @@ Across all stages, the diagnostic engine detects isolated bright stars, fits eac
 \end{itemize}
 
 \subsection{Outputs}
-The engine auto-discovers the products of a Phase 2 run directory (pairing them by filter) and writes a multi-page \texttt{diagnostics\_report.pdf}, per-stage PNGs, a machine-readable \texttt{metrics.json}, and a \textbf{pipeline-health summary} marking each stage \texttt{OK}, \texttt{SKIP}, or \texttt{FAIL}. Stages whose products are absent degrade gracefully rather than aborting the report.
+The engine auto-discovers the products of a Phase 2 run directory (pairing them by filter) and writes a multi-page \texttt{diagnostics\_report.pdf}, per-stage PNGs, a machine-readable \texttt{metrics.json}, and a \textbf{pipeline-health summary} marking each stage \texttt{OK}, \texttt{SKIP}, \texttt{OFF}, or \texttt{FAIL}. Stages whose products are absent degrade gracefully rather than aborting the report.
+
+\texttt{SKIP} and \texttt{OFF} are deliberately different facts: the first means
+the product was not found --- a gap in the run being diagnosed --- while the
+second means the stage was switched off in configuration, which is a choice. The
+four stages inspect four different products and share no state, so unlike the
+science phases they may be reordered freely, purely for how the report should
+read. \texttt{metrics.json} additionally carries a \texttt{step\_plans} entry
+recording the resolved plan of \emph{all four} phases, so the reduction that
+produced the products under inspection is reconstructable from the report alone.
 
 \newpage
 
@@ -947,7 +1324,10 @@ Astronomical FITS headers lack strict standardization across observatories (e.g.
 \begin{itemize}[leftmargin=*]
     \item \textbf{Translation Layer:} The core mathematical engine never directly reads a FITS file. Instead, it queries the \texttt{InstrumentProfile}. The profile safely iterates through known header variants to extract critical data like Gain and Read Noise.
     \item \textbf{Failsafe Fallbacks:} In the event of missing or corrupted headers, the profile utilizes a hard-coded \texttt{hardware\_database} dictionary. By extracting the telescope ID, it can safely inject verified baseline hardware constants (e.g., \texttt{'T32': \{'gain': 1.0, 'read\_noise': 9.0\}}), ensuring the processing loops never fail due to missing metadata.
+    \item \textbf{Saturation as a Detector Property:} Full well is a property of the sensor, not of the reduction, so the profile is asked first via \texttt{get\_saturation()} --- the base implementation reads \texttt{SATURATE}, \texttt{SATLEVEL} or \texttt{FULLWELL} from the header --- and \texttt{Phase1Config.saturation\_adu} serves only as the fallback when the instrument cannot say. A profile for a telescope whose camera is characterised should override this method, so that adding a telescope to the network does not mean shipping a configuration file alongside it just to flag saturated pixels correctly.
 \end{itemize}
+
+\paragraph{Why this matters for CASSA.} The Adapter Pattern is not decoration: CASSA operates 8-inch, 14-inch and 24-inch telescopes, each with its own detector, and the iTelescope frames used throughout this document are a \emph{test case} rather than the target instrument. Every detector-dependent quantity is therefore reached through the profile, and every threshold that must vary between detectors is expressed relatively (see \hyperref[app:bpm]{Appendix A.5}) or exposed through \texttt{config}. Adding a new telescope should mean writing one \texttt{InstrumentProfile} subclass, not editing a phase.
 
 \subsection{The Mathematics of Flat Frame Normalization}\label{app:flat}
 Simply averaging flat frames together is mathematically dangerous, as a brighter flat frame would overpower a dimmer one, and transient anomalies (like a cosmic ray striking the flat panel) would be permanently baked into the Master Flat.
@@ -955,6 +1335,26 @@ Simply averaging flat frames together is mathematically dangerous, as a brighter
     \item \textbf{The Percentage Map:} By dividing every single pixel in a flat frame by that frame's overall median value, the arbitrary brightness (ADU) is converted into a percentage map centered around 1.0. A darkened corner pixel might become 0.80 (meaning 80\% transmission).
     \item \textbf{Statistical Rejection:} Once normalized, the stack of flat frames is merged using a \textbf{Median Combine} along the Z-axis. If a cosmic ray artificially spikes a pixel to a massive value in one frame, the median calculation entirely ignores it, resulting in a pristine Master Flat that solely maps permanent optical defects.
 \end{itemize}
+
+\paragraph{The order is not cosmetic.} Normalising \emph{before} combining is what makes the combine statistically meaningful, and the cost of the reverse order is easy to underestimate. Twilight sky flats fade measurably as they are taken: on the workshop dataset the level drifts by $27\%$--$57\%$ \emph{within a single filter}. Two things then go wrong if raw ADU frames are combined first.
+\begin{itemize}[leftmargin=*]
+    \item \textbf{The median tracks the wrong quantity.} A per-pixel median across frames of differing level returns roughly the shape of whichever frames sit mid-level, discarding the signal-to-noise of the rest. Measured against the correct procedure, the recovered flat field differs by up to $2.5\%$.
+    \item \textbf{The uncertainty becomes meaningless.} The master's error plane is the stack scatter, $\mathrm{mad\_std}/\sqrt{N}$. Computed on unnormalised frames it measures the \emph{fading sky}, not per-pixel noise --- inflating the master flat's relative uncertainty from $\approx 0.11\%$ (the photon-noise floor, which the correct order reproduces) to $\approx 4.3\%$, a factor of $26$--$42$ too large.
+\end{itemize}
+Because \texttt{flat\_correct} propagates \emph{relative} uncertainty, that inflation lands hardest where it does the most damage. On sky-level pixels the science \texttt{ERR} plane is barely affected ($1.8\%$), but on the bright pixels that photometry actually measures the error bars were inflated by up to $3.5\times$:
+\begin{center}
+\begin{tabular}{@{}rrrr@{}}
+    \toprule
+    Signal (e\textsuperscript{-}) & \texttt{ERR} combine-first & \texttt{ERR} normalise-first & Improvement \\
+    \midrule
+    $0$--$200$ (sky)   &  23.24 & 22.82 &  1.8\% \\
+    $200$--$1000$      &  28.89 & 26.46 &  8.4\% \\
+    $1000$--$5000$     &  76.05 & 43.41 & 42.9\% \\
+    $5000$--$20000$    & 306.51 & 86.51 & 71.8\% \\
+    \bottomrule
+\end{tabular}
+\end{center}
+Over-large error bars on exactly the bright, well-measured stars propagate directly into Phase 3, where they corrupt both the reported magnitude uncertainties and the inverse-variance weighting of the zero-point fit.
 
 \subsection{Overscan Banding Correction}\label{app:overscan}
 Amplifier heat and voltage fluctuations cause the baseline electronic noise to drift as a sensor is read out from top to bottom, resulting in horizontal banding.
@@ -970,17 +1370,30 @@ The pipeline utilizes an adaptation of the L.A.Cosmic algorithm to differentiate
 \end{itemize}
 
 \subsection{Bad Pixel Mask Generation (BPM)}\label{app:bpm}
-While cosmic rays are transient anomalies, camera sensors also suffer from permanent hardware defects, such as "dead" pixels (always read zero) or "hot" pixels (always read maximum signal).
+While cosmic rays are transient anomalies, camera sensors also suffer from permanent hardware defects. These do not all announce themselves the same way, and --- critically --- \textbf{no single calibration product can see all of them}. The pipeline therefore builds the BPM from every master available and combines the results with a bitwise OR.
 \begin{itemize}[leftmargin=*]
-    \item \textbf{Derivation from Flats:} The pipeline \emph{generates} the Bad Pixel Mask directly from the normalised master flats: any pixel whose response deviates strongly from unity (by default, below $0.5\times$ or above $1.5\times$ the median), or which is non-finite, is flagged as defective. Pooling this across all filters yields a robust, detector-level BPM.
-    \item \textbf{Folded into DQ:} Rather than silently discarding these pixels, the BPM is recorded in the \texttt{DQ} bitmask (bit 2, \texttt{BAD\_PIXEL}) so that downstream stages can see, and choose how to treat, every flagged coordinate.
+    \item \textbf{Sensitivity defects, from the flats:} Any pixel in the normalised master flat whose response deviates strongly from unity (by default below $0.5\times$ or above $1.5\times$), or which is non-finite, is flagged. This catches dead pixels, low-QE pixels and dust shadows. Pooling across filters yields a detector-level result.
+    \item \textbf{Hot pixels, from the darks:} A hot pixel has anomalous \emph{dark current}, and a flat cannot see it. In a few-second flat exposure, even severe dark current is a rounding error against a lamp signal of tens of thousands of ADU --- on the workshop dataset, the normalised flat value at every genuinely hot pixel lies between $0.93$ and $1.04$, squarely inside the acceptance band. The pipeline therefore converts the master dark to a per-second rate, $\dot{D} = D \cdot g / t_{\mathrm{dark}}$ (e\textsuperscript{-}/s), and flags pixels far above the frame's median rate.
+    \item \textbf{Unstable pixels, from the biases:} Some pixels read out at a plausible \emph{level} but never the same one twice (random-telegraph / flickering pixels). These are invisible to any single master, but show up as anomalous frame-to-frame scatter across the bias stack.
 \end{itemize}
 
-\subsection{Strict Dark Current Matching vs. Scaling}\label{app:dark}
+\paragraph{Detector-portable thresholds.} Each cut is expressed relative to that master's own median rather than in absolute ADU or e\textsuperscript{-}/s, so the defaults transfer from one telescope to the next without retuning. Each threshold is the \emph{larger} of a multiple of the median and a robust sigma clip:
+\[
+    T = \max\!\left(f \cdot \mathrm{median}(x),\;\; \mathrm{median}(x) + k \cdot \mathrm{mad\_std}(x)\right)
+\]
+The two terms cover opposite failure modes. On a detector with appreciable dark current the multiplicative term dominates and sets a physically meaningful cut. On a very clean detector, where the median sits near zero and a bare multiple would flag the entire frame as ordinary scatter crosses it, the sigma term takes over. A master that is absent simply skips its test, and setting a factor to $0$ disables one.
+
+\paragraph{Why an incomplete BPM is not harmless.} An unpopulated mask does not merely omit information --- it actively corrupts the cosmic-ray classification. The BPM is passed to \texttt{astroscrappy} as its \texttt{inmask}, so pixels it contains are excluded from the cosmic-ray search. When hot pixels are missing from the mask, LA\,Cosmic re-detects the very same defect as a "cosmic ray" in \emph{every single frame}. Because a genuine cosmic ray is a one-off event, this yields a physically impossible signature that also serves as a free diagnostic: on the workshop dataset, a flat-only mask left $197$ pixels flagged as cosmic rays in two or more frames, $24$ of them in all $14$. Consulting the master dark cut those to $108$ and $5$, while leaving the genuine one-off detections essentially untouched ($388 \rightarrow 341$).
+
+\paragraph{Folded into DQ.} Rather than silently discarding these pixels, the BPM is recorded in the \texttt{DQ} bitmask (bit 2, \texttt{BAD\_PIXEL}) so that downstream stages can see, and choose how to treat, every flagged coordinate. Note the structural consequence of the \texttt{inmask} coupling: \texttt{BAD\_PIXEL} and \texttt{COSMIC\_RAY} can never co-occur on the same pixel, because the pipeline never asks whether a known-bad pixel is also a cosmic ray.
+
+\subsection{Dark Current Matching vs. Scaling}\label{app:dark}
 Astronomical thermal noise is notoriously complex. While baseline dark current accumulates somewhat linearly over time, other thermal artifacts do not.
 \begin{itemize}[leftmargin=*]
-    \item \textbf{The Scaling Problem:} Modern CMOS sensors (and many CCDs) exhibit "amplifier glow"—a localized thermal bloom near the sensor's electronics. This glow is highly non-linear. If the pipeline were to mathematically scale a 300-second dark frame by a factor of 2 to calibrate a 600-second science frame, it would severely over-correct the amplifier glow, creating black holes in the final image.
-    \item \textbf{The \texttt{scale=False} Imperative:} By explicitly setting \texttt{scale=False} during the \texttt{subtract\_dark} operation, the pipeline enforces strict rigor: it refuses to scale thermal frames. It mandates that the Master Dark exposure time must perfectly match the science frame exposure time, preserving the non-linear thermal structures and ensuring a mathematically perfect subtraction.
+    \item \textbf{The Scaling Problem:} Modern CMOS sensors (and many CCDs) exhibit "amplifier glow"---a localized thermal bloom near the sensor's electronics. This glow is highly non-linear. If the pipeline were to mathematically scale a 300-second dark frame by a factor of 2 to calibrate a 600-second science frame, it would over-correct the amplifier glow. \textbf{Matched exposures remain strongly preferred}, and when they match the pipeline subtracts the dark unscaled, exactly preserving those non-linear structures.
+    \item \textbf{Why refusing to scale is not the same as rigour:} Declining to scale does not \emph{enforce} a matched exposure; it only makes a mismatch invisible. A pipeline hard-coded to \texttt{scale=False} that is handed a 120-second master dark and a 60-second science frame subtracts the full 120 seconds of thermal signal --- twice what the frame accumulated --- and reports nothing. The error is silent, uniform across the detector, and indistinguishable from a genuine background offset.
+    \item \textbf{The implemented behaviour:} The master dark records its own exposure time when it is built, and \texttt{subtract\_scaled\_dark} compares that against each science frame. Identical exposures are subtracted unscaled (\texttt{scale=False}, the ideal case). A mismatch is rescaled by the exposure ratio and logged, so the residual amp-glow error is bounded and \emph{visible} rather than unbounded and hidden.
+    \item \textbf{The bias precondition:} Scaling is only meaningful once the bias pedestal is removed. A raw dark is $B + \dot{D}t$; scaling that by $t_{\mathrm{sci}}/t_{\mathrm{dark}}$ scales the bias along with the dark current, corrupting a large constant offset. The master therefore carries a \texttt{BIASSUB} flag, and the pipeline emits an explicit warning if it is ever asked to rescale a dark that still holds its pedestal.
 \end{itemize}
 
 \subsection{Sub-Pixel Interpolation Physics}\label{app:interp}

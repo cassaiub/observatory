@@ -1,4 +1,33 @@
-"""iTelescope network instrument profile.
+"""iTelescope network instrument profile -- a retired, worked example.
+
+This shipped with the pipeline until the instrument layer was narrowed to the
+setups CASSA actually operates. It is kept here because it is a realistic
+example of the *second* reason to write a profile class: a value that depends
+on the header (which telescope took the frame) rather than a constant, which a
+``detector:`` config block cannot express.
+
+To use it, point a config file at it -- no installation, no edit to the
+package::
+
+    # my_config.yaml
+    instrument_module: examples/profiles/itelescope.py:ITelescopeNetworkProfile
+
+Two things in here are worth reading critically rather than copying:
+
+* ``HARDWARE`` holds **unsourced constants** with no measurement provenance and
+  no binning dependence. Compare ``Cassa8InchProfile``, which carries a
+  ``MEASURED`` flag saying honestly that its curves are provisional. A profile
+  should say where its numbers came from.
+* ``flat_proxies`` substitutes a luminance flat for a missing red one. That is
+  a real convention of the network's calibration sets, and it is also
+  **scientifically lossy**: L spans ~400-700 nm and R is a subset of it, so the
+  wavelength-dependent part of the pixel response and any filter-specific dust
+  shadows go uncorrected. The right thing about it is that the profile
+  *declares* it, so the choice is visible and per-instrument rather than
+  hardcoded in a phase.
+
+Original docstring follows.
+
 
 The network's frames are ordinary single-chip FITS, so all of the header parsing
 comes from :class:`~cassa_photometry.instruments.base.InstrumentProfile`. What

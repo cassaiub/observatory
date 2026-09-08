@@ -16,3 +16,7 @@
 /docs/*.log
 /docs/*.out
 /docs/*.toc
+
+# LaTeX build artifacts
+*.fls
+*.fdb_latexmk

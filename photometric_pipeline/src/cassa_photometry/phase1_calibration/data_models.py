@@ -6,10 +6,10 @@ the per-pixel error budget at the very start of the pipeline with
 saturation mask so saturated pixels can be flagged in the DQ plane later.
 """
 
-import ccdproc
 import astropy.units as u
+import numpy as np
 from astropy.io import fits
-from astropy.nddata import CCDData
+from astropy.nddata import CCDData, StdDevUncertainty
 
 from cassa_photometry.config import load_config
 from cassa_photometry.logging_utils import get_logger
@@ -44,7 +44,21 @@ class StandardCCD:
         self.sat_mask = sat_mask
 
 
-def load_standardized_ccds(filepath, instrument, config=None, add_uncertainty=True):
+def _poisson_plus_read_noise(data, gain, read_noise, bias_level=0.0):
+    """Per-pixel 1-sigma uncertainty in ADU.
+
+    ``sqrt(signal_e + read_noise_e^2) / gain``, where ``signal_e`` is the
+    *collected* charge -- counts above the bias pedestal, floored at zero
+    because a negative measurement still carries at least the read noise.
+    """
+    signal_e = np.clip(
+        (np.asarray(data, dtype=float) - float(bias_level or 0.0)) * float(gain), 0.0, None
+    )
+    return np.sqrt(signal_e + float(read_noise) ** 2) / float(gain)
+
+
+def load_standardized_ccds(filepath, instrument, config=None, add_uncertainty=True,
+                           bias_level=0.0):
     """Read a FITS file and return a list of :class:`StandardCCD`.
 
     Always returns a list (length 1 for a single-chip camera, length N for a
@@ -62,6 +76,11 @@ def load_standardized_ccds(filepath, instrument, config=None, add_uncertainty=Tr
     add_uncertainty : bool
         When True, attach a ``StdDevUncertainty`` computed from the detector
         gain and read noise (the start of the error budget).
+    bias_level : float
+        Bias pedestal in ADU, subtracted before computing the Poisson term. The
+        pedestal is an electronic offset, not collected charge, so counting it
+        as signal inflates every pixel's uncertainty. Zero when no master bias
+        is known yet, which is the case for the calibration frames themselves.
     """
     if config is None:
         config = load_config()
@@ -105,6 +124,7 @@ def load_standardized_ccds(filepath, instrument, config=None, add_uncertainty=Tr
                 "gain": gain,
                 "read_noise": read_noise,
                 "overscan": instrument.get_overscan_region(header),
+                "trim": instrument.get_trim_region(header),
                 "fringe_needed": instrument.needs_fringe_correction(header),
                 "filter": instrument.get_filter(header),
                 # ROI origin, so full-frame masters can be cropped to a
@@ -121,14 +141,34 @@ def load_standardized_ccds(filepath, instrument, config=None, add_uncertainty=Tr
             if saturation is None:
                 saturation = config.phase1.saturation_adu
             sat_mask = ccd.data >= saturation
+            # Recorded so later steps can reason about the level rather than
+            # re-deriving it: cosmic-ray rejection needs it in post-bias units.
+            meta["saturation_adu"] = float(saturation)
+            meta["bias_level"] = float(bias_level or 0.0)
 
-            # Seed the error budget: sigma = sqrt(gain*ADU + readnoise^2) / gain.
+            # Non-linearity, in raw ADU and before anything else touches the
+            # data. Only does something when the profile supplies a curve; the
+            # default is the identity, and the frame records which it got.
+            if config.phase1.steps.enabled("linearity"):
+                corrected = instrument.apply_linearity(ccd.data, header)
+                linearised = corrected is not ccd.data
+                if linearised:
+                    ccd.data = np.asarray(corrected, dtype=ccd.data.dtype)
+                meta["linearised"] = bool(linearised)
+
+            # Seed the error budget: sigma = sqrt(signal*gain + readnoise^2)/gain.
+            #
+            # `signal` must be the counts the detector actually collected, which
+            # is the raw value minus the bias pedestal -- Poisson noise comes
+            # from photons and dark current, not from an electronic offset. A
+            # typical 500-2000 ADU pedestal treated as signal injects tens of
+            # electrons of fictitious noise into *every* pixel, swamping the read
+            # noise on a sky-limited frame.
             if add_uncertainty:
-                ccd = ccdproc.create_deviation(
-                    ccd,
-                    gain=meta["gain"] * u.electron / u.adu,
-                    readnoise=meta["read_noise"] * u.electron,
-                    disregard_nan=True,
+                ccd.uncertainty = StdDevUncertainty(
+                    _poisson_plus_read_noise(
+                        ccd.data, meta["gain"], meta["read_noise"], bias_level
+                    )
                 )
 
             standardized_list.append(StandardCCD(ccd, meta, sat_mask=sat_mask))

@@ -14,10 +14,13 @@
 \usepackage{booktabs}
 \usepackage{listings}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta,positioning,shapes.geometric}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,backgrounds,calc}
 
 \definecolor{cassablue}{RGB}{28,69,135}
 \definecolor{cassagrey}{RGB}{240,240,245}
+\definecolor{cassagreen}{RGB}{22,110,74}
+\definecolor{cassaamber}{RGB}{176,102,12}
+\definecolor{cassared}{RGB}{160,40,40}
 \definecolor{codebg}{RGB}{245,245,248}
 
 \lstset{
@@ -32,12 +35,40 @@
   showstringspaces=false,
 }
 
+% ---------------------------------------------------------------------
+% Shared visual language for every diagram in the deck:
+%   grey  = data on disk        blue  = an operation
+%   green = science product     amber = the error / quality tracks
+% ---------------------------------------------------------------------
+\tikzset{
+  dat/.style   = {rectangle, rounded corners=2pt, draw=black!55, fill=black!6,
+                  thick, align=center, font=\scriptsize, inner sep=3pt},
+  op/.style    = {rectangle, rounded corners=2pt, draw=cassablue, fill=cassablue!10,
+                  very thick, align=center, font=\scriptsize, inner sep=3pt},
+  prod/.style  = {rectangle, rounded corners=2pt, draw=cassagreen, fill=cassagreen!10,
+                  very thick, align=center, font=\scriptsize, inner sep=3pt},
+  errbox/.style= {rectangle, rounded corners=2pt, draw=cassaamber, fill=cassaamber!10,
+                  thick, align=center, font=\scriptsize, inner sep=3pt},
+  why/.style   = {align=center, font=\tiny\itshape, text=black!65, inner sep=1pt},
+  arr/.style   = {-{Stealth[length=2.2mm]}, very thick, draw=cassablue},
+  darr/.style  = {-{Stealth[length=2.2mm]}, thick, draw=cassaamber, dashed},
+  garr/.style  = {-{Stealth[length=2.2mm]}, thick, draw=black!55},
+}
+
 % "Aside" frames carry the deeper math; skippable for a lighter audience.
 \newcommand{\asidetag}{\hfill{\footnotesize\color{cassablue}[math aside --- optional]}}
+% Legend reused on the phase-flow slides.
+\newcommand{\flowlegend}{%
+  \begin{tikzpicture}[baseline]
+    \node[dat]  (a) at (0,0) {data};
+    \node[op, right=2mm of a]   (b) {operation};
+    \node[prod, right=2mm of b] (c) {product};
+    \node[errbox, right=2mm of c] (d) {ERR / DQ};
+  \end{tikzpicture}}
 
 \title[cassa-photometry]{The \texttt{cassa-photometry} Pipeline}
 \subtitle{From raw pixels to calibrated catalogs, with an error budget the whole way}
-\author{CASSA Observatory Workshop}
+\author{TDMMA Workshop 2026}
 \date{\today}
 
 \begin{document}
@@ -53,56 +84,96 @@
 % =====================================================================
 \section{Motivation \& Overview}
 % =====================================================================
-\begin{frame}{Why a pipeline?}
+\begin{frame}{What is actually in a raw frame?}
+  \centering
+  \vspace{0.2em}
+  \resizebox{\textwidth}{!}{%
+  \begin{tikzpicture}[node distance=1.4mm]
+    \node[dat, minimum height=1.35cm, text width=1.35cm, fill=cassagreen!12, draw=cassagreen]
+      (raw) {\textbf{RAW}\\ \tiny(ADU)};
+    \node[right=2mm of raw, font=\large] (eq) {$=$};
+    \node[op, right=2mm of eq, minimum height=1.35cm, text width=1.25cm,
+          fill=cassagreen!18, draw=cassagreen] (sig) {sky\\ $+$\\ \textbf{stars}};
+    \node[right=1.4mm of sig] (p1) {$+$};
+    \node[dat, right=1.4mm of p1, minimum height=1.35cm, text width=1.1cm] (bias) {bias\\ \tiny offset};
+    \node[right=1.4mm of bias] (p2) {$+$};
+    \node[dat, right=1.4mm of p2, minimum height=1.35cm, text width=1.1cm] (dark) {dark\\ \tiny current};
+    \node[right=1.4mm of dark] (p3) {$\times$};
+    \node[dat, right=1.4mm of p3, minimum height=1.35cm, text width=1.1cm] (flat) {flat\\ \tiny response};
+    \node[right=1.4mm of flat] (p4) {$+$};
+    \node[errbox, right=1.4mm of p4, minimum height=1.35cm, text width=1.25cm, draw=cassared,
+          fill=cassared!10] (def) {CRs, hot\\ \& dead};
+    \node[right=1.4mm of def] (p5) {$+$};
+    \node[errbox, right=1.4mm of p5, minimum height=1.35cm, text width=1.1cm] (noi) {\textbf{noise}};
+
+    \node[why, below=1mm of sig, text width=1.35cm] {what you want};
+    \node[why, below=1mm of bias, text width=1.2cm] {remove};
+    \node[why, below=1mm of dark, text width=1.2cm] {remove};
+    \node[why, below=1mm of flat, text width=1.2cm] {divide out};
+    \node[why, below=1mm of def, text width=1.35cm] {flag, don't hide};
+    \node[why, below=1mm of noi, text width=1.35cm] {never removable --- only \textbf{propagated}};
+  \end{tikzpicture}}
+
+  \vspace{1.2em}
   \begin{columns}[T]
-    \begin{column}{0.56\textwidth}
-      A single night gives you dozens of raw frames. Each one contains, mixed together:
-      \begin{itemize}
-        \item the astronomical signal you want,
-        \item the detector's fingerprint (bias, dark current, flat-field response),
-        \item cosmic rays, hot/dead pixels, saturation,
-        \item and \textbf{noise} --- which never goes away, only propagates.
-      \end{itemize}
-      \vspace{0.4em}
-      The pipeline turns that pile of raw FITS into \textbf{one calibrated,
-      WCS-solved, flux-calibrated catalog} --- and, crucially, tells you the
-      \textbf{uncertainty} on every number.
+    \begin{column}{0.52\textwidth}
+      \footnotesize The pipeline's job is to undo the middle three terms, label the
+      fifth, and \emph{track} the last one all the way to the catalog.
     \end{column}
     \begin{column}{0.44\textwidth}
-      \begin{block}{The golden rule}
-        A measurement without an error bar is not a measurement.
-        \emph{Every stage} of \texttt{cassa-photometry} carries the error forward.
+      \begin{block}{\small The golden rule}
+        \small A measurement without an error bar is not a measurement.
       \end{block}
     \end{column}
   \end{columns}
 \end{frame}
 
-\begin{frame}{The four phases}
+\begin{frame}{The whole journey on one slide}
   \centering
-  \scriptsize
-  \begin{tikzpicture}[
-      node distance=0.55cm and 0.7cm,
-      box/.style={rectangle, rounded corners, draw=cassablue, fill=cassagrey,
-                  very thick, text width=2.35cm, align=center, minimum height=1.5cm},
-      arr/.style={-{Stealth[length=3mm]}, very thick, draw=cassablue}]
-    \node[box] (p1) {\textbf{Phase 1}\\ Calibration (ISR)};
-    \node[box, right=of p1] (p2) {\textbf{Phase 2}\\ Integration \& WCS};
-    \node[box, right=of p2] (p3) {\textbf{Phase 3}\\ Photometry};
-    \node[box, right=of p3] (p4) {\textbf{Phase 4}\\ Diagnostics};
-    \draw[arr] (p1) -- (p2);
-    \draw[arr] (p2) -- (p3);
-    \draw[arr] (p3) -- (p4);
-    \node[below=0.15cm of p1, text width=2.4cm, align=center] {raw $\rightarrow$ calibrated \\ (electrons)};
-    \node[below=0.15cm of p2, text width=2.4cm, align=center] {stacked master \\ + sky coordinates};
-    \node[below=0.15cm of p3, text width=2.4cm, align=center] {magnitudes \\ + catalog};
-    \node[below=0.15cm of p4, text width=2.4cm, align=center] {quality report \\ (PDF/PNG/JSON)};
-  \end{tikzpicture}
-  \vspace{1em}
-  \begin{itemize}\footnotesize
-    \item Each phase is one \texttt{cassa-*} command and one Python sub-package.
-    \item They share three things: a config system, logging, and the SCI/ERR/DQ FITS model.
-    \item Each writes to its own directory: \texttt{work/phase1} $\rightarrow$ \texttt{phase2} $\rightarrow$ \texttt{phase3} $\rightarrow$ \texttt{phase4}.
-  \end{itemize}
+  \vspace{-0.2em}
+  \resizebox{\textwidth}{!}{%
+  \begin{tikzpicture}[node distance=3mm]
+    % --- main data spine (SCI)
+    \node[dat, text width=1.3cm, minimum height=0.85cm] (raw) {raw\\ \tiny ADU};
+    \node[op, right=3.5mm of raw, text width=1.45cm, minimum height=0.85cm] (p1) {\textbf{Phase 1}\\ \tiny ISR};
+    \node[dat, right=3.5mm of p1, text width=1.4cm, minimum height=0.85cm] (cal) {calibrated\\ \tiny e$^-$};
+    \node[op, right=3.5mm of cal, text width=1.45cm, minimum height=0.85cm] (p2) {\textbf{Phase 2}\\ \tiny stack + WCS};
+    \node[dat, right=3.5mm of p2, text width=1.4cm, minimum height=0.85cm] (mas) {master\\ \tiny e$^-$, deep};
+    \node[op, right=3.5mm of mas, text width=1.45cm, minimum height=0.85cm] (p3) {\textbf{Phase 3}\\ \tiny photometry};
+    \node[prod, right=3.5mm of p3, text width=1.45cm, minimum height=0.85cm] (cat) {catalog\\ \tiny Jy \& mag};
+
+    \foreach \a/\b in {raw/p1, p1/cal, cal/p2, p2/mas, mas/p3, p3/cat}
+      \draw[arr] (\a) -- (\b);
+
+    % --- the ERR track, riding along underneath
+    \node[errbox, below=6mm of p1, text width=1.45cm, minimum height=0.6cm] (e1) {seed ERR};
+    \node[errbox, below=6mm of p2, text width=1.45cm, minimum height=0.6cm] (e2) {warp + stack};
+    \node[errbox, below=6mm of p3, text width=1.45cm, minimum height=0.6cm] (e3) {$\rightarrow$ mag error};
+    \draw[darr] (e1) -- (e2);
+    \draw[darr] (e2) -- (e3);
+    \foreach \a/\b in {p1/e1, p2/e2, p3/e3} \draw[darr] (\a) -- (\b);
+    \node[why, left=2mm of e1, text width=0.9cm] {\textbf{ERR}};
+
+    % --- the DQ track
+    \node[errbox, below=3.5mm of e1, text width=1.45cm, minimum height=0.6cm] (d1) {build DQ};
+    \node[errbox, below=3.5mm of e2, text width=1.45cm, minimum height=0.6cm] (d2) {propagate};
+    \node[errbox, below=3.5mm of e3, text width=1.45cm, minimum height=0.6cm] (d3) {$\rightarrow$ FLAGS};
+    \draw[darr] (d1) -- (d2);
+    \draw[darr] (d2) -- (d3);
+    \node[why, left=2mm of d1, text width=0.9cm] {\textbf{DQ}};
+
+    % --- Phase 4 reads all three tracks back
+    \node[op, below=5mm of d2, text width=2.6cm, minimum height=0.7cm,
+          draw=cassaamber, fill=cassaamber!12] (p4) {\textbf{Phase 4} \tiny diagnostics};
+    \draw[darr] (cat.south) -- ++(0,-0.35) -| (p4.east);
+    \draw[darr] (d1) -- (p4);
+    \draw[darr] (d3) -- (p4);
+  \end{tikzpicture}}
+
+  \vspace{0.5em}
+  {\footnotesize The \textbf{SCI} spine runs along the top. The \textbf{ERR} and \textbf{DQ}
+  tracks are not an afterthought --- they are created in Phase 1 and updated by every
+  later operation. Phase 4 reads all three back.}
 \end{frame}
 
 \begin{frame}[fragile]{One command per phase}
@@ -114,220 +185,556 @@ cassa-diagnose   work/phase2 --raw raw/    # Phase 4: diagnostics
 
 cassa-run -i raw/ -o work/                 # Phases 1->2->3 chained
 cassa-verify work/phase3                   # independent sanity check
+cassa-doctor                               # is this machine ready? (run it first)
 \end{lstlisting}
   \vspace{0.3em}
-  We will meet each of these in the hands-on session. Today: \emph{what each one does and why}.
+  \footnotesize Each phase is one sub-package writing to its own directory
+  (\texttt{work/phase1} $\rightarrow$ \texttt{phase2} $\rightarrow$ \texttt{phase3}
+  $\rightarrow$ \texttt{phase4}), sharing one config system, logger and FITS model.
 \end{frame}
 
 % =====================================================================
 \section{The Data Model: SCI / ERR / DQ}
 % =====================================================================
-\begin{frame}{The conceptual spine: three planes, not one}
-  Every science image travels as a \textbf{multi-extension FITS} file:
-  \vspace{0.5em}
-  \begin{center}
-  \begin{tabular}{@{}lll@{}}
-    \toprule
-    Plane & Meaning & Units \\
-    \midrule
-    \texttt{SCI} (primary) & the science data & electrons ($\rightarrow$ Jy later) \\
-    \texttt{ERR} & 1-$\sigma$ per-pixel uncertainty & same as SCI \\
-    \texttt{DQ} & integer quality bitmask & --- \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-  \vspace{0.6em}
-  \begin{itemize}
-    \item \texttt{SCI} in the \emph{primary} HDU $\Rightarrow$ ordinary tools (DS9, \texttt{fits.getdata}, \texttt{solve-field}) still work.
-    \item \texttt{ERR} and \texttt{DQ} ride along and are updated by \emph{every} stage.
-    \item This is why the final catalog can quote a real \texttt{Mag\_Error}.
-  \end{itemize}
+\begin{frame}{Three planes, not one}
+  \centering
+  \begin{tikzpicture}[scale=0.95, transform shape]
+    % Stacked planes, drawn back to front. Each label sits in the strip its
+    % own plane leaves exposed, so nothing is hidden by the plane in front.
+    \begin{scope}[every node/.style={font=\scriptsize}]
+      \draw[fill=black!8, draw=black!55, thick]         (2.4,1.4) rectangle ++(3.2,1.5);
+      \node at (4.0,2.58) {\textbf{DQ} \;\tiny integer bitmask};
+      \draw[fill=cassaamber!14, draw=cassaamber, thick] (1.2,0.7) rectangle ++(3.2,1.5);
+      \node at (2.8,1.88) {\textbf{ERR} \;\tiny 1-$\sigma$, same units};
+      \draw[fill=cassagreen!14, draw=cassagreen, very thick] (0,0) rectangle ++(3.2,1.5);
+      \node at (1.6,0.75) {\textbf{SCI} \;\tiny primary HDU};
+    \end{scope}
+    \node[why, right=6mm of current bounding box.east, anchor=west, text width=5.0cm,
+          font=\scriptsize\upshape] {
+      \textbf{SCI} in the \emph{primary} HDU, so DS9, \texttt{fits.getdata} and
+      \texttt{solve-field} still work on it unchanged.\\[0.4em]
+      \textbf{ERR} and \textbf{DQ} travel as named extensions and are rewritten by
+      \emph{every} stage.\\[0.4em]
+      This is the only reason the final catalog can quote a real
+      \texttt{Mag\_Error}.};
+  \end{tikzpicture}
+
+  \vspace{0.8em}
+  \begin{tikzpicture}[node distance=3mm]
+    \node[dat, text width=2.0cm] (a) {raw\\ \tiny SCI only};
+    \node[op, right=4mm of a, text width=1.5cm] (b) {Phase 1};
+    \node[prod, right=4mm of b, text width=2.6cm] (c) {SCI + ERR + DQ\\ \tiny all three, forever};
+    \draw[arr] (a) -- (b);
+    \draw[arr] (b) -- (c);
+    \node[why, right=4mm of c, text width=4.2cm]
+      {once created, the planes are never dropped --- only transformed};
+  \end{tikzpicture}
 \end{frame}
 
-\begin{frame}{The DQ bitmask}
-  A pixel can be flagged for several reasons at once --- so we use \textbf{bit flags}
-  combined with bitwise OR:
-  \vspace{0.5em}
-  \begin{center}
-  \begin{tabular}{@{}rll@{}}
-    \toprule
-    Bit value & Name & Set when\dots \\
-    \midrule
-    0 & \texttt{GOOD} & nothing wrong \\
-    1 & \texttt{SATURATED} & pixel $\ge$ saturation ADU \\
-    2 & \texttt{BAD\_PIXEL} & hot/dead (from the bad-pixel mask) \\
-    4 & \texttt{COSMIC\_RAY} & flagged by LA\,Cosmic \\
-    8 & \texttt{NO\_DATA} & NaN / outside the warp footprint \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-  \vspace{0.6em}
-  Example: \texttt{DQ = 5 = 1 | 4} $\Rightarrow$ the pixel is both saturated \emph{and} a cosmic ray.
-  Downstream, each catalog source inherits the OR of the flags inside its footprint.
+\begin{frame}{The DQ bitmask: one integer, many reasons}
+  \centering
+  \begin{tikzpicture}[node distance=2mm]
+    \foreach \bit/\nm/\x in {16/REJECTED/0, 8/NO\_DATA/2.25, 4/COSMIC\_RAY/4.5,
+                             2/BAD\_PIXEL/6.75, 1/SATURATED/9.0} {
+      \node[dat, minimum width=2.0cm, minimum height=0.75cm, anchor=west] at (\x,0)
+        (n\bit) {\texttt{\bit} \;\; \tiny\texttt{\nm}};
+    }
+    \node[why, below=1mm of n16, text width=2.1cm] {frames clipped here (stacks only)};
+    \node[why, below=1mm of n8, text width=2.1cm]  {NaN / outside warp footprint};
+    \node[why, below=1mm of n4, text width=2.1cm]  {LA\,Cosmic hit};
+    \node[why, below=1mm of n2, text width=2.1cm]  {hot / dead / unstable};
+    \node[why, below=1mm of n1, text width=2.1cm]  {$\ge$ saturation ADU};
+  \end{tikzpicture}
+
+  \vspace{1.0em}
+  \begin{tikzpicture}[node distance=2mm]
+    \node[font=\small] (l) {A pixel that is saturated \emph{and} a cosmic ray:};
+    \node[op, right=4mm of l, font=\small] (b) {$1 \;|\; 4 \;=\; 5$};
+    \node[right=3mm of b, font=\small\ttfamily] (bin) {0101};
+    \node[why, right=4mm of bin, text width=4.6cm]
+      {each catalog source inherits the OR of every flag inside its footprint};
+  \end{tikzpicture}
+
+  \vspace{0.9em}
+  \begin{block}{\small Not every combination is reachable}
+    \footnotesize The bad-pixel mask \emph{is} \texttt{astroscrappy}'s \texttt{inmask}, so
+    \texttt{BAD\_PIXEL} and \texttt{COSMIC\_RAY} are disjoint \textbf{by construction} ---
+    the pipeline never asks whether a known-bad pixel is also a cosmic ray.
+  \end{block}
 \end{frame}
 
 % =====================================================================
 \section{Phase 1: Calibration (ISR)}
 % =====================================================================
-\begin{frame}{Phase 1 --- Instrument Signature Removal}
-  Goal: remove the detector's fingerprint and \emph{start} the error budget.
-  \begin{enumerate}
-    \item Build master \textbf{bias}, \textbf{dark}, \textbf{flat} (median-combined, each with its own uncertainty).
-    \item Build a \textbf{bad-pixel mask} from the normalized flat (outliers $<0.5$ or $>1.5$).
-    \item For each science frame:
-      \begin{itemize}
-        \item subtract bias, subtract (scaled) dark, divide by flat;
-        \item reject cosmic rays (LA\,Cosmic / \texttt{astroscrappy});
-        \item convert ADU $\rightarrow$ electrons via the gain;
-        \item assemble the \texttt{DQ} plane (saturation, bad pixel, CR, no-data).
-      \end{itemize}
-  \end{enumerate}
-  \vspace{0.3em}
-  \footnotesize Output: \texttt{calibrated\_*.fits} (SCI/ERR/DQ, in electrons). Library: \texttt{ccdproc} does the arithmetic \emph{and} propagates uncertainty automatically.
+\begin{frame}{Phase 1 --- building the masters}
+  \centering
+  \vspace{-0.1em}
+  \begin{tikzpicture}[node distance=4mm]
+    \node[dat, text width=1.5cm] (rb) {bias\\ \tiny frames};
+    \node[dat, below=8mm of rb, text width=1.5cm] (rd) {dark\\ \tiny frames};
+    \node[dat, below=8mm of rd, text width=1.5cm] (rf) {flat\\ \tiny frames};
+
+    \node[op, right=10mm of rb, text width=2.3cm] (mb) {median combine};
+    \node[op, right=10mm of rd, text width=2.3cm] (md) {$-$ bias, \\ normalise $t$, combine};
+    \node[op, right=10mm of rf, text width=2.3cm] (mf) {$-$ bias, $-$ dark,\\ \textbf{normalise each}, combine};
+
+    \node[prod, right=8mm of mb, text width=1.9cm] (Mb) {\textbf{master bias}\\ \tiny + $\sigma$};
+    \node[prod, right=8mm of md, text width=1.9cm] (Md) {\textbf{master dark}\\ \tiny + $\sigma$, + \texttt{EXPTIME}};
+    \node[prod, right=8mm of mf, text width=1.9cm] (Mf) {\textbf{master flat}\\ \tiny + $\sigma$, $\approx 1.0$};
+
+    \foreach \a/\b in {rb/mb, rd/md, rf/mf, mb/Mb, md/Md, mf/Mf} \draw[arr] (\a) -- (\b);
+    \draw[garr] (Mb.south) .. controls +(0,-0.5) and +(0,0.5) .. (md.north);
+    \draw[garr] (Md.south) .. controls +(0,-0.5) and +(0,0.5) .. (mf.north);
+
+    \node[why, right=5mm of Mb, text width=3.6cm]
+      {\textbf{why:} median rejects transients; $\sigma=\mathrm{mad\_std}/\sqrt{N}$ becomes real ERR later};
+    \node[why, right=5mm of Md, text width=3.6cm]
+      {\textbf{why:} record the exposure so it can be \emph{rescaled}, not assumed};
+    \node[why, right=5mm of Mf, text width=3.6cm]
+      {\textbf{why:} twilight flats fade 27--57\%; normalising first keeps the combine honest};
+  \end{tikzpicture}
+
+  \vspace{0.5em}
+  {\footnotesize Every master is built \emph{with} its own uncertainty --- which is precisely
+  what lets \texttt{ccdproc} fold calibration noise into each science frame automatically.}
+\end{frame}
+
+\begin{frame}{Phase 1 --- what happens to one science frame}
+  \centering
+  \vspace{-0.3em}
+  \begin{tikzpicture}[
+      pstep/.style={op, text width=1.5cm, minimum height=0.72cm},
+      ann/.style={why, text width=1.95cm, anchor=north}]
+    % --- row 1 (y = 0), annotations hang beneath each box
+    \node[dat, text width=1.4cm, minimum height=0.72cm] (in) at (0,0) {raw\\ \tiny ADU};
+    \node[pstep] (s0) at (2.15,0) {linearise};
+    \node[pstep] (s1) at (4.3,0) {seed ERR};
+    \node[pstep] (s2) at (6.45,0) {overscan};
+    \node[pstep] (s3) at (8.6,0) {$-$ bias};
+    \node[pstep] (s4) at (10.75,0) {$-$ dark};
+    \foreach \a/\b in {in/s0, s0/s1, s1/s2, s2/s3, s3/s4} \draw[arr] (\a) -- (\b);
+
+    \node[ann] at (2.15,-0.46) {profile's own curve \\ \emph{identity if none}};
+    \node[ann] at (4.3,-0.46) {$\sqrt{g(I{-}B)+\mathrm{RN}^2}\,/\,g$ \\ \emph{the pedestal is not signal}};
+    \node[ann] at (6.45,-0.46) {row-wise median \\ \emph{kills banding}};
+    \node[ann] at (8.6,-0.46) {quadrature add \\ \emph{drop the pedestal}};
+    \node[ann] at (10.75,-0.46) {rescale by the $t$ ratio \\ \emph{drop thermal signal}};
+
+    % --- row 2 (y = -2.7), reached through a clear lane at y = -1.5
+    \node[pstep] (s5) at (0,-2.7) {$\div$ flat};
+    \node[pstep] (s6) at (2.15,-2.7) {reject CRs};
+    \node[pstep] (s7) at (4.3,-2.7) {sanity-check};
+    \node[pstep] (s8) at (6.45,-2.7) {$\times$ gain};
+    \node[pstep] (s9) at (8.6,-2.7) {build DQ};
+    \node[prod, text width=1.6cm, minimum height=0.72cm] (out) at (10.75,-2.7) {SCI/ERR/DQ\\ \tiny e$^-$};
+    \foreach \a/\b in {s5/s6, s6/s7, s7/s8, s8/s9, s9/out} \draw[arr] (\a) -- (\b);
+    \draw[arr] (s4.east) -- ++(0.45,0) -- ++(0,-1.5) -| (s5.north);
+
+    \node[ann] at (0,-3.16)    {relative errors add \\ \emph{flatten the optics}};
+    \node[ann] at (2.15,-3.16) {Laplacian, \texttt{inmask}=BPM \\ \emph{sharp $\neq$ star}};
+    \node[ann] at (4.3,-3.16)  {mask $>1\%$ of the frame? \\ \emph{veto it whole}};
+    \node[ann] at (6.45,-3.16) {scales SCI \emph{and} ERR \\ \emph{ADU $\rightarrow$ physical}};
+    \node[ann] at (8.6,-3.16)  {OR the masks \\ \emph{label, never delete}};
+  \end{tikzpicture}
+
+  \vspace{0.4em}
+  {\footnotesize\flowlegend \hfill Library: \texttt{ccdproc} does the arithmetic \emph{and} propagates $\sigma$ at every step.}
+
+  \vspace{0.2em}
+  {\tiny Cosmic rays arrive at a rate set by the sky, not the field --- well under $0.1\%$
+  of pixels even in a long exposure. A mask claiming more than $1\%$ of the frame is
+  therefore not cosmic rays but the fine-structure model meeting a crowded field, so it is
+  discarded whole and \texttt{CRVETO} written to the header.}
+\end{frame}
+
+\begin{frame}{Phase 1 --- one mask, three witnesses}
+  \centering
+  \begin{tikzpicture}[node distance=4mm]
+    \node[dat, text width=1.7cm, minimum height=0.8cm] (f) {master\\ \textbf{flat}};
+    \node[dat, below=4mm of f, text width=1.7cm, minimum height=0.8cm] (d) {master\\ \textbf{dark}};
+    \node[dat, below=4mm of d, text width=1.7cm, minimum height=0.8cm] (b) {master\\ \textbf{bias}};
+
+    % What each witness catches lives INSIDE its box, so the converging
+    % arrows below have a clear lane and never strike through the text.
+    \node[op, right=8mm of f, text width=4.0cm] (of)
+      {\emph{local} response $<0.5$ or $>1.5$ \\ {\tiny\itshape dead, low-QE, dust}};
+    \node[op, right=8mm of d, text width=4.0cm] (od)
+      {rate $> 20\times$ median, or $>5\sigma$ \\ {\tiny\itshape \textbf{hot} pixels}};
+    \node[op, right=8mm of b, text width=4.0cm] (ob)
+      {scatter $> 5\times$ median, or $>5\sigma$ \\ {\tiny\itshape unstable / flickering}};
+
+    \node[prod, right=14mm of od, text width=2.0cm, minimum height=1.5cm] (bpm)
+      {\textbf{BPM}\\ \tiny bitwise OR};
+    \foreach \a/\b in {f/of, d/od, b/ob} \draw[arr] (\a) -- (\b);
+    \draw[arr] (of.east) -| ++(0.7,-1.02) -- (bpm.west);
+    \draw[arr] (od.east) -- (bpm.west);
+    \draw[arr] (ob.east) -| ++(0.7, 1.02) -- (bpm.west);
+  \end{tikzpicture}
+
+  \vspace{0.5em}
+  \begin{columns}[T]
+    \begin{column}{0.50\textwidth}
+      {\footnotesize \textbf{Why all three?} A hot pixel adds $\sim$15\,e$^-$ to a flat sitting
+      at tens of thousands of ADU. On our data every hot pixel has a normalised flat value of
+      $0.93$--$1.04$ --- dead centre. \emph{No flat threshold will ever find it.}
+      \par\smallskip \textbf{Local}, not global: vignetting is optics, not a defect.}
+    \end{column}
+    \begin{column}{0.47\textwidth}
+      {\footnotesize \textbf{Why it matters:} the BPM is LA\,Cosmic's \texttt{inmask}. Miss a
+      hot pixel and it is re-detected as a ``cosmic ray'' in \emph{every} frame --- which is
+      physically impossible, and therefore a free self-test.}
+      \vspace{0.2em}
+      {\tiny Flat-only: 197 px flagged CR in $\ge2$ frames, 24 in all 14.
+      Adding darks: 108 and 5; genuine one-off hits untouched ($388\to341$).}
+    \end{column}
+  \end{columns}
 \end{frame}
 
 \begin{frame}{Phase 1 --- seeding the error budget \asidetag}
-  The raw uncertainty of a pixel is Poisson (photon shot noise) plus read noise:
-  \[
-    \sigma_{\text{ADU}} = \frac{\sqrt{g \cdot \text{ADU} + \text{RN}^2}}{g}
-    \quad\text{(electrons after gain: } \sigma_e = \sqrt{g\cdot\text{ADU} + \text{RN}^2}\text{)}
-  \]
-  where $g$ is the gain (e$^-$/ADU) and RN the read noise (e$^-$).
-  \vspace{0.6em}
+  \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+      Poisson (photon shot noise) plus read noise, on the counts the detector
+      \emph{collected} --- raw minus the bias pedestal $B$:
+      \[
+        \sigma_{\text{ADU}} = \frac{\sqrt{g \cdot (I - B) + \text{RN}^2}}{g}
+      \]
+      {\footnotesize Treating the pedestal as signal would inject tens of
+      fictitious electrons into \emph{every} pixel.}
+      Subtracting a master adds in quadrature:
+      \[
+        \sigma_{\text{out}} = \sqrt{\sigma_{\text{sci}}^2 + \sigma_{\text{bias}}^2}
+      \]
+      Dividing by the flat propagates \emph{relative} errors:
+      \[
+        \left(\frac{\sigma_{\text{out}}}{S_{\text{out}}}\right)^2 =
+        \left(\frac{\sigma_{\text{sci}}}{S}\right)^2 +
+        \left(\frac{\sigma_{\text{flat}}}{F}\right)^2
+      \]
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \centering
+      \begin{tikzpicture}[node distance=2mm]
+        \node[errbox, text width=3.4cm] (a) {seed: $\sqrt{g(I-B)+\mathrm{RN}^2}/g$};
+        \node[errbox, below=3mm of a, text width=3.4cm] (b) {$\oplus\;\sigma_{\text{bias}}$};
+        \node[errbox, below=3mm of b, text width=3.4cm] (c) {$\oplus\;\sigma_{\text{dark}}$};
+        \node[errbox, below=3mm of c, text width=3.4cm] (d) {$\oplus\;\sigma_{\text{flat}}/F$ \tiny(relative)};
+        \node[errbox, below=3mm of d, text width=3.4cm, fill=cassagreen!12, draw=cassagreen]
+          (e) {\textbf{ERR} plane, in e$^-$};
+        \foreach \x/\y in {a/b, b/c, c/d, d/e} \draw[darr] (\x) -- (\y);
+      \end{tikzpicture}
 
-  Every subsequent operation propagates this in quadrature. Subtracting the master bias:
-  \[
-    \sigma_{\text{out}} = \sqrt{\sigma_{\text{sci}}^2 + \sigma_{\text{bias}}^2}.
-  \]
-  Dividing by the flat propagates \emph{relative} errors:
-  \[
-    \left(\frac{\sigma_{\text{out}}}{\text{sci}_{\text{out}}}\right)^2 =
-    \left(\frac{\sigma_{\text{sci}}}{\text{sci}}\right)^2 +
-    \left(\frac{\sigma_{\text{flat}}}{\text{flat}}\right)^2 .
-  \]
+      \vspace{0.4em}
+      {\tiny Because the flat term is \emph{relative}, an over-estimated master flat
+      inflates the error bars on \textbf{bright stars} hardest --- exactly where
+      photometry is done.}
+    \end{column}
+  \end{columns}
 \end{frame}
 
 % =====================================================================
 \section{Phase 2: Integration \& Astrometry}
 % =====================================================================
-\begin{frame}{Phase 2 --- align, stack, solve}
-  Goal: combine many calibrated frames into one deep master, and give it sky coordinates.
-  \begin{enumerate}
-    \item \textbf{Group} frames by object / filter / camera / exposure.
-    \item Pick the highest-SNR frame as the \textbf{anchor}.
-    \item \textbf{Align} every other frame to the anchor (\texttt{astroalign} matches star patterns; finds shift + rotation + scale).
-    \item \textbf{Flux-scale} each frame (median ratio at matched stars), warp the data \emph{and} its variance.
-    \item \textbf{Stack} with inverse-variance weighting + outlier rejection.
-    \item \textbf{Plate-solve} the stack with Astrometry.net (\texttt{solve-field}) to attach a WCS.
-  \end{enumerate}
-  \footnotesize Output: \texttt{Master\_*.fits} (SCI/ERR/DQ + WCS) in \texttt{work/phase2}.
+\begin{frame}{Phase 2 --- what happens to a set of frames}
+  \centering
+  \vspace{-0.2em}
+  \begin{tikzpicture}[
+      pstep/.style={op, text width=1.85cm, minimum height=0.72cm},
+      ann/.style={why, text width=2.2cm, anchor=north}]
+    % --- row 1 (y = 0)
+    \node[dat, text width=1.7cm, minimum height=0.72cm] (in) at (0,0) {$N$ calibrated\\ \tiny e$^-$};
+    \node[pstep] (s1) at (2.7,0) {group};
+    \node[pstep] (s2) at (5.4,0) {pick anchor};
+    \node[pstep] (s3) at (8.1,0) {align};
+    \foreach \a/\b in {in/s1, s1/s2, s2/s3} \draw[arr] (\a) -- (\b);
+
+    \node[ann] at (2.7,-0.46) {object / filter / exposure \\ \emph{never mix bands}};
+    \node[ann] at (5.4,-0.46) {highest SNR (\texttt{mad\_std}) \\ \emph{one reference grid}};
+    \node[ann] at (8.1,-0.46) {\texttt{astroalign} asterisms \\ \emph{headers drift; stars don't}};
+
+    % --- row 2 (y = -2.7), reached through a clear lane at y = -1.5
+    \node[pstep] (s4) at (0,-2.7) {flux-scale};
+    \node[pstep] (s5) at (2.7,-2.7) {warp all 3 planes};
+    \node[pstep] (s6) at (5.4,-2.7) {stack};
+    \node[pstep] (s7) at (8.1,-2.7) {plate-solve};
+    \node[prod, text width=1.85cm, minimum height=0.72cm] (out) at (10.8,-2.7) {\texttt{Master\_*}\\ \tiny + WCS};
+    \foreach \a/\b in {s4/s5, s5/s6, s6/s7, s7/out} \draw[arr] (\a) -- (\b);
+    \draw[arr] (s3.east) -- ++(0.45,0) -- ++(0,-1.5) -| (s4.north);
+
+    \node[ann] at (0,-3.16)    {median ratio at matched stars \\ \emph{clouds / airmass}};
+    \node[ann] at (2.7,-3.16)  {bicubic, order 3 \\ \emph{keep the PSF peak}};
+    \node[ann] at (5.4,-3.16)  {inverse-variance $+$ clip \\ \emph{depth $\propto\sqrt{N}$}};
+    \node[ann] at (8.1,-3.16)  {\texttt{solve-field} or in-process; index fetched once \\ \emph{pixels $\rightarrow$ sky}};
+  \end{tikzpicture}
+
+  \vspace{0.4em}
+  {\footnotesize The ERR plane is warped and stacked \emph{with} the data; DQ rides along and
+  gains \texttt{NO\_DATA} wherever the footprints stop overlapping.}
 \end{frame}
 
 \begin{frame}{Phase 2 --- why inverse-variance weighting? \asidetag}
-  If frame $i$ has variance $\text{var}_i$, weight it by $w_i = 1/\text{var}_i$. The stack is
-  \[
-    \text{master} = \frac{\sum_i w_i\,\text{sci}_i}{\sum_i w_i},
-    \qquad
-    \text{var}_{\text{master}} = \frac{\sum_i w_i^2\,\text{var}_i}{\left(\sum_i w_i\right)^2}
-    = \frac{1}{\sum_i w_i}.
-  \]
-  \begin{itemize}
-    \item Noisy frames contribute less; clean frames dominate. This is the \emph{optimal} linear combination.
-    \item Stacking $N$ equal frames shrinks the noise by $\sqrt{N}$ --- the ``depth boost''.
-    \item Rejection: sigma-clipping when $\ge 5$ frames, min/max otherwise, kills residual cosmic rays / satellites.
-  \end{itemize}
-\end{frame}
-
-\begin{frame}[fragile]{Phase 2 --- the astrometry index path (HPC note)}
-  \texttt{solve-field} needs multi-GB sky index files. The path is resolved at runtime, in order:
-  \begin{enumerate}
-    \item \texttt{phase2.astrometry\_index\_dir} in a config YAML, else
-    \item the \texttt{CASSA\_ASTROMETRY\_INDEX} environment variable, else
-    \item \texttt{./astrometry\_data}.
-  \end{enumerate}
-\begin{lstlisting}[language=bash]
-export CASSA_ASTROMETRY_INDEX=/shared/cassa/astrometry_data
-\end{lstlisting}
-  \footnotesize On the HPC we keep \emph{one} shared read-only copy and every participant sets the env var.
-  (There is no hard-coded path to override --- the pipeline writes a fresh solver config each run.)
+  \begin{columns}[T]
+    \begin{column}{0.55\textwidth}
+      Weight frame $i$ by $w_i = 1/\mathrm{var}_i$:
+      \[
+        \text{master} = \frac{\sum_i w_i\,\text{sci}_i}{\sum_i w_i},
+        \qquad
+        \mathrm{var}_{\text{master}} = \frac{1}{\sum_i w_i}.
+      \]
+      \begin{itemize}\footnotesize
+        \item Noisy frames contribute less; this is the \emph{optimal} linear combination.
+        \item $N$ equal frames $\Rightarrow$ noise shrinks by $\sqrt{N}$.
+        \item Rejection: sigma-clip at $\ge5$ frames, min/max below.
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.43\textwidth}
+      \centering
+      \begin{tikzpicture}[node distance=2mm, scale=0.9, transform shape]
+        \node[dat, text width=0.9cm] (f1) {$w_1$};
+        \node[dat, right=2mm of f1, text width=0.9cm] (f2) {$w_2$};
+        \node[dat, right=2mm of f2, text width=0.9cm] (f3) {$\cdots$};
+        \node[dat, right=2mm of f3, text width=0.9cm] (f4) {$w_N$};
+        \node[op, below=7mm of f2, text width=3.0cm, xshift=8mm] (st) {weighted mean};
+        \node[prod, below=5mm of st, text width=3.0cm] (m) {deep master\\ \tiny noise $/\sqrt{N}$};
+        \foreach \x in {f1,f2,f3,f4} \draw[garr] (\x) -- (st);
+        \draw[arr] (st) -- (m);
+      \end{tikzpicture}
+    \end{column}
+  \end{columns}
 \end{frame}
 
 % =====================================================================
 \section{Phase 3: Photometry \& Zero Point}
 % =====================================================================
 \begin{frame}{Phase 3 --- from counts to calibrated magnitudes}
-  Goal: put the master stack on a physical scale and catalog every source.
-  \begin{enumerate}
-    \item \textbf{Detect} stars (\texttt{DAOStarFinder}); measure them with aperture photometry (aperture + sky annulus), using the \texttt{ERR} plane.
-    \item \textbf{Cross-match} to a reference catalog; each matched star gives a zero-point estimate.
-    \item \textbf{Combine} the per-star zero points $\rightarrow$ one \texttt{MAGZERO} $\pm$ \texttt{MAGZERR} per filter.
-    \item \textbf{Flux-calibrate} the image to Janskys; \textbf{catalog} all sources (segmentation + deblending).
-  \end{enumerate}
-  \footnotesize Output: \texttt{*\_fluxcal.fits} (Jy), \texttt{*\_catalog.csv} (with \texttt{Flux\_Error}, \texttt{Mag\_Error}, \texttt{SNR}, \texttt{FLAGS}), \texttt{*\_segmap.fits}.
+  \centering
+  \vspace{-0.2em}
+  \begin{tikzpicture}[
+      pstep/.style={op, text width=1.9cm, minimum height=0.72cm},
+      ann/.style={why, text width=2.25cm, anchor=north}]
+    % --- row 1 (y = 0)
+    \node[dat, text width=1.5cm, minimum height=0.72cm] (in) at (0,0) {master\\ \tiny e$^-$};
+    \node[pstep] (s1) at (2.8,0) {detect};
+    \node[pstep] (s2) at (5.6,0) {aperture phot.};
+    \node[pstep] (s3) at (8.4,0) {cross-match};
+    \foreach \a/\b in {in/s1, s1/s2, s2/s3} \draw[arr] (\a) -- (\b);
+
+    \node[ann] at (2.8,-0.46) {\texttt{DAOStarFinder} \\ \emph{find the stars}};
+    \node[ann] at (5.6,-0.46) {aperture $+$ sky annulus, uses ERR \\ \emph{$F \pm \delta F$}};
+    \node[ann] at (8.4,-0.46) {Gaia $\to$ APASS $\to$ Pan-STARRS $\to$ SDSS \\ \emph{a known truth}};
+
+    % --- row 2 (y = -2.7), reached through a clear lane at y = -1.5
+    \node[pstep] (s4) at (0,-2.7) {zero point};
+    \node[pstep] (s5) at (2.8,-2.7) {flux-calibrate};
+    \node[pstep] (s6) at (5.6,-2.7) {segment $+$ deblend};
+    \node[prod, text width=1.9cm, minimum height=0.72cm] (out) at (8.4,-2.7) {catalog CSV\\ \tiny + fluxcal FITS};
+    \foreach \a/\b in {s4/s5, s5/s6, s6/out} \draw[arr] (\a) -- (\b);
+    \draw[arr] (s3.east) -- ++(0.45,0) -- ++(0,-1.5) -| (s4.north);
+
+    \node[ann] at (0,-3.16)    {clip $+$ inverse-variance \\ \emph{\texttt{MAGZERO} $\pm$ \texttt{MAGZERR}}};
+    \node[ann] at (2.8,-3.16)  {apply ZP, e$^-\rightarrow$ Jy \\ \emph{physical units}};
+    \node[ann] at (5.6,-3.16)  {photutils segmentation \\ \emph{every source, not just stars}};
+  \end{tikzpicture}
+
+  \vspace{0.4em}
+  {\footnotesize Output columns: \texttt{MAG\_BEST}, \texttt{MAG\_PSF},
+  \texttt{MAG\_AUTO}, \texttt{MAG\_APER}, \texttt{MAG\_ISO}, \texttt{CLASS},
+  \texttt{SNR}, \texttt{FLAGS} --- the DQ bits OR-ed inside each source footprint.
+  With no zero point every one of those is \texttt{NaN} and \texttt{MAG\_INST} carries
+  the measurement instead: a failed cross-match costs you the scale, not the photometry.}
 \end{frame}
 
 \begin{frame}{Phase 3 --- the zero point, with an error bar \asidetag}
-  For each catalog-matched star:
-  \[
-    m_{\text{inst}} = -2.5\log_{10}(F), \qquad
-    \delta m_{\text{inst}} = \frac{2.5}{\ln 10}\,\frac{\delta F}{F} \approx 1.0857\,\frac{\delta F}{F}.
-  \]
-  \[
-    \mathrm{ZP}_i = m_{\text{cat}} - m_{\text{inst}}, \qquad
-    \delta \mathrm{ZP}_i = \sqrt{\delta m_{\text{inst}}^2 + \delta m_{\text{cat}}^2}.
-  \]
-  Combine with sigma-clipping + inverse-variance weighting:
-  \[
-    \mathrm{ZP} = \frac{\sum_i w_i \mathrm{ZP}_i}{\sum_i w_i}, \quad w_i = 1/\delta\mathrm{ZP}_i^2,
-  \]
-  and report \texttt{MAGZERR} as the \emph{larger} of the formal error and the scatter's standard error (conservative). Final source magnitude:
-  \[
-    \delta m = \sqrt{(1.0857\,\delta F/F)^2 + \texttt{MAGZERR}^2}.
-  \]
-\end{frame}
-
-\begin{frame}{Phase 3 --- the reference catalog}
-  The zero point is calibrated \emph{differentially}: detected stars are matched to a
-  photometric reference catalog, queried in a filter-aware priority cascade:
-  \[
-    \textbf{APASS} \;\rightarrow\; \textbf{Pan-STARRS DR2} \;\rightarrow\; \textbf{SDSS DR12}
-  \]
-  \begin{itemize}
-    \item The first catalog to return valid stars for the requested band wins.
-    \item Each matched star contributes its catalog magnitude \emph{and} its uncertainty.
-    \item These are standardized into one table (\texttt{RAJ2000, DEJ2000, Ref\_Mag, Ref\_Mag\_Err}).
-  \end{itemize}
-  \footnotesize This step reaches out to the catalog services, so the compute node needs outbound internet.
+  \begin{columns}[T]
+    \begin{column}{0.56\textwidth}
+      For each catalog-matched star:
+      \[
+        m_{\text{inst}} = -2.5\log_{10}(F), \quad
+        \delta m_{\text{inst}} \approx 1.0857\,\frac{\delta F}{F}
+      \]
+      \[
+        \mathrm{ZP}_i = m_{\text{cat}} - m_{\text{inst}}, \quad
+        \delta \mathrm{ZP}_i = \sqrt{\delta m_{\text{inst}}^2 + \delta m_{\text{cat}}^2}
+      \]
+      Combine with sigma-clipping and $w_i = 1/\delta\mathrm{ZP}_i^2$; report
+      \texttt{MAGZERR} as the \emph{larger} of the formal error and the scatter's
+      standard error. Final source magnitude:
+      \[
+        \delta m = \sqrt{(1.0857\,\delta F/F)^2 + \texttt{MAGZERR}^2}
+      \]
+    \end{column}
+    \begin{column}{0.42\textwidth}
+      \centering
+      \begin{tikzpicture}[node distance=2.5mm, scale=0.92, transform shape]
+        \node[dat, text width=3.2cm] (a) {$N$ matched stars};
+        \node[op, below=4mm of a, text width=3.2cm] (b) {per-star $\mathrm{ZP}_i \pm \delta\mathrm{ZP}_i$};
+        \node[op, below=4mm of b, text width=3.2cm] (c) {sigma-clip outliers};
+        \node[op, below=4mm of c, text width=3.2cm] (d) {inverse-variance mean};
+        \node[prod, below=4mm of d, text width=3.2cm] (e) {\texttt{MAGZERO} $\pm$ \texttt{MAGZERR}};
+        \foreach \x/\y in {a/b, b/c, c/d, d/e} \draw[arr] (\x) -- (\y);
+      \end{tikzpicture}
+    \end{column}
+  \end{columns}
 \end{frame}
 
 % =====================================================================
+\begin{frame}{Which magnitude? \asidetag}
+  \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+      An aperture never catches \emph{all} of a star's light, and how much it
+      misses depends on the source.
+
+      \medskip
+      \texttt{MAG\_ISO} is \textbf{isophotal} --- the flux above the detection
+      threshold. A bright star's footprint reaches further down its wings than a
+      faint one's, so the fraction captured \emph{depends on brightness}.
+
+      \medskip
+      Applying an aperture-derived zero point to it therefore \textbf{tilts} the
+      magnitude scale. A tilt is not an offset: no single correction removes it.
+
+      \medskip
+      {\footnotesize Measured against simulated data with known truth.}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \centering
+      {\footnotesize
+      \begin{tabular}{lrr}
+        \toprule
+        column & median & trend \\
+        \midrule
+        \texttt{MAG\_BEST} & $+0.03$ & $+0.004$ \\
+        \texttt{MAG\_APER} & $-0.01$ & $-0.011$ \\
+        \texttt{MAG\_ISO}  & $+0.53$ & $\mathbf{+0.348}$ \\
+        \bottomrule
+      \end{tabular}
+      \par\medskip
+      trend in mag per mag
+      }
+
+      \vspace{1em}
+      \begin{block}{\small Which column, then?}
+        \footnotesize \texttt{MAG\_BEST} --- PSF for point sources, Kron for extended --- is
+        the \emph{total} magnitude. \texttt{MAG\_APER} is measured in the same aperture the
+        zero point was, so it is the one exactly consistent with the calibration.
+        \texttt{MAG\_ISO} is kept only for comparison with older catalogs.
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Star or galaxy? Concentration, not shape \asidetag}
+  \begin{columns}[T]
+    \begin{column}{0.55\textwidth}
+      The discriminant is $\texttt{MAG\_PSF} - \texttt{MAG\_AUTO}$: how much of a
+      source's light lies outside the PSF core.
+
+      \medskip
+      \textbf{Not ellipticity.} That is \emph{shape}: a face-on elliptical
+      galaxy is round and passes as a star; a slightly trailed star is elongated
+      and fails.
+
+      \medskip
+      The threshold is calibrated \textbf{per frame} from the stellar locus
+      itself --- so it adapts to tonight's seeing, with no training data.
+    \end{column}
+    \begin{column}{0.43\textwidth}
+      \begin{block}{\small \texttt{AMBIGUOUS} is an answer}
+        \footnotesize Below the SNR where the locus separation falls under its
+        own scatter, no class is asserted. \texttt{CLASSLIM} records where that
+        happens, rather than pretending to classify to the detection limit.
+      \end{block}
+      \medskip
+      {\footnotesize Why it matters beyond the catalog column: a galaxy leaking
+      into the zero point biases \emph{every} magnitude in the frame.}
+    \end{column}
+  \end{columns}
+\end{frame}
+
 \section{Phase 4: Diagnostics}
 % =====================================================================
 \begin{frame}{Phase 4 --- did it actually work?}
-  \texttt{cassa-diagnose} inspects each stage and writes a multi-page PDF + PNGs + \texttt{metrics.json}.
-  \begin{itemize}
-    \item \textbf{Stage 0 (raw):} PSF/FWHM, background, star detection, saturation map.
-    \item \textbf{Stage 1 (calibrated):} SCI/ERR/DQ panels, DQ flag counts, the ERR-vs-signal (Poisson) sanity check.
-    \item \textbf{Stage 2 (master):} SNR map, depth boost vs a single frame ($\approx\sqrt{N}$), WCS status + plate scale.
-    \item \textbf{Stage 3 (photometry):} Mag vs Mag\_Error, SNR vs Mag, number counts / limiting magnitude, star/galaxy split, the recorded ZP + \texttt{MAGZERR}.
-  \end{itemize}
-  \vspace{0.3em}
-  This is where you \emph{read} the error budget you have been carrying the whole way.
+  \centering
+  \begin{tikzpicture}[node distance=4mm]
+    \node[dat, text width=1.6cm, minimum height=0.8cm] (r) {raw};
+    \node[dat, right=6mm of r, text width=1.6cm, minimum height=0.8cm] (c) {calibrated};
+    \node[dat, right=6mm of c, text width=1.6cm, minimum height=0.8cm] (m) {master};
+    \node[dat, right=6mm of m, text width=1.6cm, minimum height=0.8cm] (p) {catalog};
+
+    \node[op, below=8mm of r, text width=1.9cm, draw=cassaamber, fill=cassaamber!12] (dr) {PSF, background, saturation};
+    \node[op, below=8mm of c, text width=1.9cm, draw=cassaamber, fill=cassaamber!12] (dc) {DQ counts, ERR vs signal};
+    \node[op, below=8mm of m, text width=1.9cm, draw=cassaamber, fill=cassaamber!12] (dm) {SNR map, depth $\sqrt{N}$, WCS};
+    \node[op, below=8mm of p, text width=1.9cm, draw=cassaamber, fill=cassaamber!12] (dp) {mag vs error, limiting mag};
+    \foreach \a/\b in {r/dr, c/dc, m/dm, p/dp} \draw[darr] (\a) -- (\b);
+
+    \node[prod, right=8mm of dp, text width=2.1cm, minimum height=1.0cm]
+      (rep) {PDF + PNGs\\ + \texttt{metrics.json}};
+    \draw[arr] (dp) -- (rep);
+  \end{tikzpicture}
+
+  \vspace{0.8em}
+  {\footnotesize Phase 4 does not change a single pixel --- it \emph{reads back} the error
+  budget you have been carrying since Phase 1 and asks whether it behaves. The ERR-vs-signal
+  panel should trace $\sqrt{S}$; the depth boost should approach $\sqrt{N}$. When they do not,
+  something upstream is wrong.}
 \end{frame}
 
 % =====================================================================
 \section{Recap \& Hands-on Preview}
 % =====================================================================
-\begin{frame}{Recap}
-  \begin{itemize}
-    \item The pipeline is four phases, each a \texttt{cassa-*} command.
-    \item The SCI/ERR/DQ model is the spine: uncertainty and quality flags flow from raw pixels to final magnitudes.
-    \item Phase 1 seeds the error; Phase 2 stacks it optimally; Phase 3 turns it into calibrated magnitudes with error bars; Phase 4 lets you check it.
-    \item Phase 2 plate-solves against a \textbf{local} astrometry index (shared on the HPC, no network); Phase 3's catalog cross-match is a live query.
+\begin{frame}{The units journey}
+  \centering
+  \vspace{0.3em}
+  \begin{tikzpicture}[node distance=3mm]
+    \node[dat, text width=1.7cm, minimum height=0.8cm] (u1) {\textbf{ADU}\\ \tiny raw counts};
+    \node[dat, right=7mm of u1, text width=1.9cm, minimum height=0.8cm] (u2) {\textbf{ADU}\\ \tiny pedestal gone};
+    \node[dat, right=7mm of u2, text width=1.9cm, minimum height=0.8cm] (u3) {\textbf{e$^-$}\\ \tiny physical charge};
+    \node[dat, right=7mm of u3, text width=1.9cm, minimum height=0.8cm] (u4) {\textbf{e$^-$}\\ \tiny deep, aligned};
+    \node[prod, right=7mm of u4, text width=1.9cm, minimum height=0.8cm] (u5) {\textbf{Jy / mag}\\ \tiny on the sky};
+    \foreach \a/\b in {u1/u2, u2/u3, u3/u4, u4/u5} \draw[arr] (\a) -- (\b);
+    \node[why, below=1.5mm of u1, text width=1.9cm] {arbitrary};
+    \node[why, below=1.5mm of u2, text width=2.0cm] {bias, dark, flat};
+    \node[why, below=1.5mm of u3, text width=2.0cm] {$\times$ gain};
+    \node[why, below=1.5mm of u4, text width=2.0cm] {stack + WCS};
+    \node[why, below=1.5mm of u5, text width=2.0cm] {$\times$ zero point};
+  \end{tikzpicture}
+
+  \vspace{1.2em}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{\small What never changes}
+        \footnotesize Three planes travel together the entire way. Every operation that
+        touches SCI also touches ERR and DQ.
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{\small What to remember}
+        \footnotesize Phase 1 \emph{seeds} the error, Phase 2 \emph{stacks} it optimally,
+        Phase 3 \emph{converts} it to magnitudes, Phase 4 \emph{checks} it.
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{In the hands-on session}
+  \centering
+  \begin{tikzpicture}[node distance=3mm]
+    \node[dat, text width=1.75cm, minimum height=0.8cm] (n0) {\texttt{00}\\ \tiny setup check};
+    \node[dat, right=4mm of n0, text width=1.75cm, minimum height=0.8cm] (n1) {\texttt{01}\\ \tiny raw health};
+    \node[op, right=4mm of n1, text width=1.75cm, minimum height=0.8cm] (n2) {\texttt{02}\\ \tiny Phase 1};
+    \node[op, right=4mm of n2, text width=1.75cm, minimum height=0.8cm] (n3) {\texttt{03}\\ \tiny Phase 2};
+    \node[prod, right=4mm of n3, text width=1.75cm, minimum height=0.8cm] (n4) {\texttt{04}\\ \tiny Phase 3};
+    \foreach \a/\b in {n0/n1, n1/n2, n2/n3, n3/n4} \draw[arr] (\a) -- (\b);
+  \end{tikzpicture}
+
+  \vspace{1.0em}
+  \begin{itemize}\footnotesize
+    \item Notebooks \texttt{02}--\texttt{04} each end with \textbf{two exercises}, part-written:
+          you fill in the lines marked \texttt{TODO}, and a worked solution surrounds them.
+    \item Notebook \texttt{01} reads only the raw frames and returns a go/no-go verdict;
+          \texttt{02}--\texttt{04} each consume the previous notebook's output.
+    \item Phase 2 plate-solves against an Astrometry.net index (fetched once, then local);
+          Phase 3's cross-match is a \textbf{live} catalog query.
   \end{itemize}
-  \begin{block}{In the hands-on session}
-    You will run all four phases on real frames in notebooks \texttt{00}--\texttt{05}, inspecting the SCI/ERR/DQ planes and the catalog at each step.
-  \end{block}
 \end{frame}
 
 \begin{frame}

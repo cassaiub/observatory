@@ -1,0 +1,576 @@
+% =====================================================================
+%  CASSA Observatory -- Photometric Pipeline: Participant Handbook
+%
+%  Build (run twice, so the table of contents settles):
+%      pdflatex participant_handbook.tex
+%      pdflatex participant_handbook.tex
+%
+%  Needs a TeX install with sourceserifpro, sourcesanspro, inconsolata and
+%  tcolorbox -- all in texlive-latex-recommended / texlive-fonts-extra.
+% =====================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{textcomp}
+\usepackage[default,semibold]{sourceserifpro}
+\usepackage[semibold]{sourcesanspro}
+\usepackage[varqu,varl]{inconsolata}
+\usepackage{microtype}
+
+\usepackage[a4paper,top=2.3cm,bottom=2.3cm,left=2.5cm,right=2.5cm,headsep=14pt]{geometry}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{fancyhdr}
+\usepackage{fancyvrb}
+\usepackage[breakable,skins]{tcolorbox}
+\usepackage{parskip}
+\usepackage[hidelinks]{hyperref}
+
+% ---------------------------------------------------------------- palette
+\definecolor{ink}{HTML}{111820}
+\definecolor{inksoft}{HTML}{54606E}
+\definecolor{inkfaint}{HTML}{7C8996}
+\definecolor{accent}{HTML}{1C6B8B}
+\definecolor{accentsoft}{HTML}{E6F1F6}
+\definecolor{rule}{HTML}{D2DCE4}
+\definecolor{sunk}{HTML}{EEF2F6}
+\definecolor{pass}{HTML}{2C7A55}
+\definecolor{warn}{HTML}{9E6614}
+\definecolor{fail}{HTML}{AF382A}
+\definecolor{warnsoft}{HTML}{FBF2E2}
+
+\color{ink}
+\hypersetup{colorlinks=true,linkcolor=accent,urlcolor=accent,
+            pdftitle={CASSA Photometric Pipeline -- Participant Handbook},
+            pdfauthor={CASSA Observatory}}
+
+% ---------------------------------------------------------------- headings
+\titleformat{\section}
+  {\sffamily\bfseries\Large\color{ink}}
+  {\color{accent}\normalsize\thesection\hspace{0.7em}}{0pt}{}
+  [\vspace{2pt}{\color{ink}\titlerule[1.2pt]}]
+\titlespacing*{\section}{0pt}{22pt}{10pt}
+
+\titleformat{\subsection}{\sffamily\bfseries\normalsize\color{ink}}{}{0pt}{}
+\titlespacing*{\subsection}{0pt}{14pt}{4pt}
+
+\titleformat{\subsubsection}[runin]
+  {\sffamily\bfseries\small\color{inksoft}}{}{0pt}{}[\hspace{0.5em}]
+\titlespacing*{\subsubsection}{0pt}{8pt}{6pt}
+
+\setlist[itemize]{leftmargin=1.1em,itemsep=2pt,topsep=3pt,parsep=0pt}
+\setlist[enumerate]{leftmargin=1.4em,itemsep=2pt,topsep=3pt,parsep=0pt}
+
+% ---------------------------------------------------------------- running head
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{rule}\leaders\hrule height \headrulewidth\hfill}}
+\fancyhead[L]{\sffamily\scriptsize\color{inkfaint}CASSA Photometric Pipeline \textbullet\ Participant Handbook}
+\fancyhead[R]{\sffamily\scriptsize\color{inkfaint}\thepage}
+
+% ---------------------------------------------------------------- code
+\DefineVerbatimEnvironment{cmdtext}{Verbatim}
+  {fontsize=\small,fontfamily=tt,commandchars=\\\{\},xleftmargin=0pt}
+
+\newtcolorbox{cmd}{
+  breakable, enhanced, sharp corners, boxrule=0pt, leftrule=2pt,
+  colback=sunk, colframe=accent, boxsep=0pt,
+  left=9pt, right=9pt, top=7pt, bottom=7pt,
+  before skip=8pt, after skip=10pt
+}
+
+\newcommand{\cm}[1]{\texttt{\small #1}}
+\newcommand{\cmt}[1]{\textcolor{inkfaint}{#1}}
+
+% ---------------------------------------------------------------- callouts
+\newtcolorbox{note}[1][Note]{
+  breakable, enhanced, sharp corners, boxrule=0pt, leftrule=2.5pt,
+  colback=accentsoft, colframe=accent,
+  left=10pt, right=10pt, top=8pt, bottom=8pt,
+  before skip=10pt, after skip=12pt,
+  fonttitle=\sffamily\bfseries\scriptsize,
+  coltitle=inksoft, title={\MakeUppercase{#1}}, attach title to upper=\par\vspace{3pt}
+}
+\newtcolorbox{caution}[1][Careful]{
+  breakable, enhanced, sharp corners, boxrule=0pt, leftrule=2.5pt,
+  colback=warnsoft, colframe=warn,
+  left=10pt, right=10pt, top=8pt, bottom=8pt,
+  before skip=10pt, after skip=12pt,
+  fonttitle=\sffamily\bfseries\scriptsize,
+  coltitle=warn, title={\MakeUppercase{#1}}, attach title to upper=\par\vspace{3pt}
+}
+
+% notebook entry
+\newtcolorbox{nbbox}[2]{
+  breakable, enhanced, sharp corners=all, boxrule=0.5pt,
+  colback=white, colframe=rule,
+  left=12pt, right=12pt, top=10pt, bottom=10pt,
+  before skip=10pt, after skip=12pt,
+  title={\sffamily\bfseries\small\colorbox{accent}{\textcolor{white}{\ \texttt{#1}\ }}\hspace{6pt}#2},
+  coltitle=ink, colbacktitle=white, titlerule=0pt,
+  attach boxed title to top left={xshift=0pt,yshift*=0pt},
+  boxed title style={empty}
+}
+
+\newcommand{\verdict}[3]{%
+  \noindent\colorbox{#1!14}{\textcolor{#1}{\sffamily\bfseries\scriptsize\ #2\ }}%
+  \hspace{6pt}\begin{minipage}[t]{0.80\textwidth}\small #3\end{minipage}\par\vspace{5pt}}
+
+\newcommand{\recordline}[2]{%
+  \vspace{6pt}{\color{rule}\hrule}\vspace{6pt}%
+  \noindent{\sffamily\bfseries\scriptsize\color{accent}\MakeUppercase{#1}}\hspace{6pt}%
+  \begin{minipage}[t]{0.78\textwidth}\small #2\end{minipage}}
+
+\setlength{\tabcolsep}{8pt}
+\renewcommand{\arraystretch}{1.25}
+\newcommand{\thead}[1]{{\sffamily\bfseries\scriptsize\color{inkfaint}\MakeUppercase{#1}}}
+
+\begin{document}
+
+% =====================================================================
+%  Masthead
+% =====================================================================
+\thispagestyle{empty}
+\begin{flushleft}
+{\sffamily\bfseries\scriptsize\color{accent}\MakeUppercase{CASSA Observatory \textbullet\ Hands-on session}}\par
+\vspace{10pt}
+{\sffamily\bfseries\fontsize{28}{32}\selectfont Photometric Pipeline\\Participant Handbook}\par
+\vspace{14pt}
+{\large\color{inksoft} Everything you need for the session: install the pipeline on your own
+machine, put a night of observatory data where it belongs, and work through five notebooks
+that take raw frames to a calibrated magnitude --- with an error bar you can defend.}\par
+\vspace{20pt}
+{\color{rule}\hrule height 1pt}
+\vspace{10pt}
+\begin{tabularx}{\textwidth}{@{}XXXX@{}}
+\thead{You will produce} & \thead{Notebooks} & \thead{Disk needed} & \thead{Python} \\
+{\sffamily\small one star's mag $\pm$ error} & {\sffamily\small 5, run in order} &
+{\sffamily\small $\sim$1\,GB} & {\sffamily\small 3.10 or newer} \\
+\end{tabularx}
+\vspace{6pt}
+{\color{rule}\hrule height 1pt}
+\end{flushleft}
+
+\vspace{18pt}
+{\sffamily\bfseries\large Contents}\vspace{-14pt}
+\begin{small}
+\renewcommand{\contentsname}{}
+\setcounter{tocdepth}{1}
+\tableofcontents
+\end{small}
+
+\clearpage
+
+% =====================================================================
+\section{Before you start}
+% =====================================================================
+Do the install \textbf{before} the session, not during it. Building the environment downloads a
+few hundred megabytes and takes ten to twenty minutes on a normal connection; doing it in the
+room costs everyone the first hour.
+
+\vspace{4pt}
+\begin{tabularx}{\textwidth}{@{}p{6.2cm}X@{}}
+\toprule
+\thead{What} & \thead{Why} \\
+\midrule
+A laptop running Linux or macOS & One install route for both. Windows works too, but only
+through WSL --- there is no native Windows install, so start that part early. \\
+$\sim$1\,GB free disk & 267\,MB for the night's raw frames, $\sim$325\,MB for what the
+pipeline writes, plus the environment. On Windows, allow another $\sim$2\,GB for WSL. \\
+Internet, at least once & Installing, and Phase 3's reference-catalog query. Both cache, so a
+second pass runs offline. \\
+Comfort with a terminal & You will type about six commands. No prior astronomy software needed. \\
+\bottomrule
+\end{tabularx}
+
+\begin{note}[Bring this]
+Your assigned star --- the instructor gives you either a catalog \cm{NUMBER} or an RA/Dec pair.
+Measuring it is the session's deliverable.
+\end{note}
+
+% =====================================================================
+\section{Install}
+% =====================================================================
+One route, on every operating system: get \textbf{Miniforge}, then run one
+script. Windows gets there through WSL --- see below, and do that part first.
+
+\begin{note}[Why Miniforge and not plain pip]
+Phase 2 plate-solves your images against a star catalog, and the solver is a
+compiled binary rather than a Python package. Miniforge is what supplies it,
+along with prebuilt versions of the whole scientific stack, so nothing has to
+compile on your laptop.
+\end{note}
+
+\subsection{Windows only: get to Linux first}
+There is no native Windows install. No plate solver is published for Windows ---
+not on conda-forge, not on PyPI --- so a native environment would build and then
+fail at the first WCS solve, leaving you with no zero point and no calibrated
+magnitude. WSL gives you real x86-64 Linux, where everything works.
+
+From an \textbf{administrator} PowerShell:
+
+\begin{cmd}
+\begin{cmdtext}
+wsl --install
+\end{cmdtext}
+\end{cmd}
+
+Reboot when it asks, open \textbf{Ubuntu} from the Start menu, and let it finish
+creating your user account. Everything from here on happens inside that Ubuntu
+window, and every command is the Linux one.
+
+\begin{caution}[Keep your files on the Linux side]
+Your Windows drives appear under \cm{/mnt/c}, so data you downloaded in Windows
+is reachable. But keep the repository and the work directory in your WSL home
+--- reducing a night across \cm{/mnt} is several times slower.
+\end{caution}
+
+\subsection{Step 1 --- Install Miniforge}
+Miniforge is a minimal conda that defaults to the conda-forge channel. If you
+already have conda or mamba, skip this step.
+
+The installer name is built from your own machine, so this is the same pair of
+commands on Linux, on macOS (Intel and Apple Silicon alike), and inside WSL:
+
+\begin{cmd}
+\begin{cmdtext}
+curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/\textbackslash{}
+download/Miniforge3-$(uname)-$(uname -m).sh"
+bash Miniforge3-$(uname)-$(uname -m).sh
+\end{cmdtext}
+\end{cmd}
+
+Accept the defaults, then \textbf{close and reopen your terminal} so \cm{conda}
+is on your PATH. Check it:
+
+\begin{cmd}
+\begin{cmdtext}
+conda --version
+\end{cmdtext}
+\end{cmd}
+
+\subsection{Step 2 --- Clone and install}
+Identical everywhere:
+
+\begin{cmd}
+\begin{cmdtext}
+git clone https://github.com/cassaiub/observatory.git
+cd observatory/photometric_pipeline
+./install.sh
+\end{cmdtext}
+\end{cmd}
+
+The script builds a conda environment called \cm{cassa-photometry} from
+\cm{environment.yml}, installs the pipeline into it, adds whichever plate solver
+your platform can run, and finishes by checking its own work. Expect ten to
+twenty minutes and a few hundred megabytes.
+
+\subsection{Step 3 --- Activate and verify}
+
+\begin{cmd}
+\begin{cmdtext}
+conda activate cassa-photometry
+cassa-doctor
+\end{cmdtext}
+\end{cmd}
+
+\cm{cassa-doctor} is the one command that proves the install: it reports the
+package version, the environment, the plate solver and the index directory.
+\textbf{Run it before the session, and bring the output if anything is not
+green.} You need to run \cm{conda activate cassa-photometry} in every new
+terminal.
+
+\begin{note}[Which solver you get]
+On x86-64 Linux and Intel macOS the script installs Astrometry.net's
+\cm{solve-field}. On Apple Silicon there is no build of it, so the in-process
+Python solver is used instead --- slower on hard fields, but correct, and
+nothing else in the session changes. \cm{cassa-doctor} tells you which one you
+have.
+\end{note}
+
+% =====================================================================
+\section{Where the data goes}
+% =====================================================================
+The acquisition software writes a night as a tree, sorted by frame type and then by target.
+Copy that whole dated folder, unchanged, into \cm{photometric\_pipeline/workshop/raw/}:
+
+\begin{cmd}
+\begin{cmdtext}
+workshop/raw/
+`-- 20260903                    \cmt{<- the night, as the software named it}
+    |-- BIAS/untargeted/          \cmt{15 frames}
+    |-- DARK/untargeted/          \cmt{15 frames}
+    |-- FLAT/untargeted/          \cmt{56 frames}
+    `-- LIGHT/m22/                \cmt{20 frames}
+        `-- 20260903T043707.171323_m22_Luminance_LIGHT_iub-dhaka_....fits
+\end{cmdtext}
+\end{cmd}
+
+Do not rename, flatten or sort anything. \cm{RAW\_DIR} is searched \textbf{recursively}, so the
+tree is read exactly as delivered --- and a single flat directory of frames works too, if that
+is what you are given.
+
+\begin{note}[Folders do not decide anything]
+Every frame is classified by its \cm{IMAGETYP}, \cm{FILTER} and \cm{EXPTIME} headers, never by
+the folder it sits in. A frame filed under the wrong folder is still reduced as whatever it
+actually is --- notebook 01 tells you when the two disagree.
+\end{note}
+
+\subsection{Filters in this night}
+\textcolor[HTML]{3E6FB8}{\sffamily\bfseries\small Blue}\quad
+\textcolor[HTML]{3F8A55}{\sffamily\bfseries\small Green}\quad
+\textcolor[HTML]{B4483A}{\sffamily\bfseries\small Red}\quad
+\textcolor[HTML]{6C7885}{\sffamily\bfseries\small Luminance}\par
+\vspace{4pt}
+Five science frames in each, at 60\,s. Flats exist for all four.
+
+\subsection{What the pipeline writes}
+Everything lands under \cm{workshop/work/}, one directory per phase. Re-running a phase
+replaces its products in place rather than piling up copies.
+
+\vspace{4pt}
+\begin{tabularx}{\textwidth}{@{}p{2.9cm}p{2.5cm}X@{}}
+\toprule
+\thead{Directory} & \thead{Written by} & \thead{Contents} \\
+\midrule
+\cm{work/phase1} & notebook 02 & \cm{calibrated\_*.fits} --- SCI/ERR/DQ, in electrons \\
+\cm{work/phase2} & notebook 03 & \cm{Master\_*.fits} --- stacked and WCS-solved \\
+\cm{work/phase3} & notebook 04 & \cm{*\_catalog.csv}, \cm{*\_fluxcal.fits}, segmentation maps \\
+\bottomrule
+\end{tabularx}
+
+\subsection{If your data lives somewhere else}
+Point at it instead of copying --- the notebooks honour these environment variables:
+
+\begin{cmd}
+\begin{cmdtext}
+export RAW_DIR=/path/to/the/night
+export WORK_DIR=/path/for/outputs
+\end{cmdtext}
+\end{cmd}
+
+% =====================================================================
+\section{Running the notebooks}
+% =====================================================================
+Activate the environment, then start Jupyter from the notebooks directory:
+
+\begin{cmd}
+\begin{cmdtext}
+conda activate cassa-photometry
+cd observatory/photometric_pipeline/workshop/notebooks
+jupyter lab
+\end{cmdtext}
+\end{cmd}
+
+\textbf{Run them in order.} Notebook 00 checks your environment and 01 reads only the raw
+frames, but 02, 03 and 04 each consume the previous notebook's output. Within a notebook, run
+every cell from the top --- later cells depend on names defined earlier.
+
+\subsection{The first cell of every notebook}
+Each notebook opens with the same config cell. It resolves \cm{RAW\_DIR}, \cm{WORK\_DIR} and
+the per-phase directories, then prints what it found --- including your raw tree, directory by
+directory. If those paths look wrong, stop and fix them there; everything downstream inherits
+them.
+
+\subsection{Filling in the blanks}
+The exercises are partly written for you. Lines you must complete are marked:
+
+\begin{cmd}
+\begin{cmdtext}
+gain = FILL_IN        \cmt{# TODO 1: e-/ADU as Phase 1 resolved it}
+\end{cmdtext}
+\end{cmd}
+
+The surrounding code is scaffolding --- leave it alone. Each blank takes one expression. If you
+run a cell without filling them you get \cm{NameError: name 'FILL\_IN' is not defined}, which
+names the exact line still waiting for you. Nothing fails silently.
+
+\subsection{Reading the answer tables}
+Every exercise heading carries a small table naming the one or two values it wants, with the
+expected answer beside each. Compare your numbers against it --- a mismatch is worth raising in
+the room, because it usually means something real about your data rather than a mistake in your
+arithmetic.
+
+% =====================================================================
+\section{Notebook by notebook}
+% =====================================================================
+
+\begin{nbbox}{00}{Setup \quad\textnormal{\sffamily\scriptsize\color{inkfaint}$\sim$5 min}}
+\small\color{inksoft} Four checks that your machine can do the session at all. Run every cell.
+\par\vspace{6pt}\color{ink}
+{\sffamily\bfseries\small What you are checking}
+\begin{itemize}
+\item The package imports and reports a version.
+\item The astrometry index directory resolves and holds index files.
+\item \cm{solve-field} is found --- or is not, in which case the in-process solver takes over,
+which is fine.
+\item Your raw tree is found, and the frame counts per directory match what you copied in.
+\end{itemize}
+\recordline{Stop if}{the raw tree shows zero frames, or the index directory does not exist.
+Neither is recoverable later.}
+\end{nbbox}
+
+\begin{nbbox}{01}{Raw frame health \quad\textnormal{\sffamily\scriptsize\color{inkfaint}$\sim$10 min}}
+\small\color{inksoft} Are these frames worth reducing? The pipeline will happily reduce bad
+calibration frames and produce plausible numbers that are quietly meaningless --- this is where
+that gets caught.
+\par\vspace{6pt}\color{ink}
+{\sffamily\bfseries\small What it does}
+\begin{itemize}
+\item Inventories every frame by type, filter and exposure, and flags any frame whose folder
+disagrees with its header.
+\item Measures each frame once --- level, scatter, saturated fraction, temperature --- and plots
+every frame's signal level against the ADC ceiling.
+\item Runs sixteen checks and prints a verdict.
+\end{itemize}
+\vspace{6pt}
+{\sffamily\bfseries\small The verdict}\par\vspace{5pt}
+\verdict{pass}{PROCEED}{Everything passed. Go on to 02.}
+\verdict{warn}{CAUTION}{Nothing blocking, but the result will be weaker than it looks. Note the
+warnings --- they explain later numbers.}
+\verdict{fail}{STOP}{A blocking problem. Each one names a way the reduction will be
+\emph{wrong} rather than merely noisy, and none can be repaired afterwards. Raise it with an
+instructor.}
+\recordline{Record}{the verdict, and the headline of any FAIL.}
+\end{nbbox}
+
+\begin{nbbox}{02}{Phase 1 --- Calibration \quad\textnormal{\sffamily\scriptsize\color{inkfaint}$\sim$20 min}}
+\small\color{inksoft} Bias, dark and flat come off; the frame is converted to electrons; and the
+error budget is seeded. Output is \texttt{calibrated\_*.fits} carrying SCI, ERR and DQ.
+\par\vspace{6pt}\color{ink}
+The run itself takes several minutes for a full night --- start it, then read the exercise text
+while it works.
+\vspace{6pt}
+
+{\sffamily\bfseries\small Exercises}
+\begin{itemize}
+\item[] {\ttfamily\scriptsize\color{inkfaint}Ex 1 \textbullet\ 3 blanks}\quad
+\textbf{What did calibration actually change?} Find the instrumental pedestal that was removed,
+and the real sky left behind. Both in electrons.
+\item[] {\ttfamily\scriptsize\color{inkfaint}Ex 2 \textbullet\ 2 blanks}\quad
+\textbf{Is the ERR plane just Poisson $+$ read noise?} Find the ratio of actual to predicted
+error, and what the excess is.
+\end{itemize}
+\recordline{Record}{four numbers: pedestal, sky, ratio, extra term.}
+\end{nbbox}
+
+\begin{nbbox}{03}{Phase 2 --- Integration \& WCS \quad\textnormal{\sffamily\scriptsize\color{inkfaint}$\sim$20 min}}
+\small\color{inksoft} Frames are aligned, stacked with inverse-variance weighting, and
+plate-solved against real stars. Output is \texttt{Master\_*.fits} with a WCS.
+\par\vspace{6pt}\color{ink}
+{\sffamily\bfseries\small Exercises}
+\begin{itemize}
+\item[] {\ttfamily\scriptsize\color{inkfaint}Ex 1 \textbullet\ 2 blanks}\quad
+\textbf{How much deeper is the stack?} Find the depth gain and the number of frames stacked.
+Compare against $\sqrt{N}$.
+\item[] {\ttfamily\scriptsize\color{inkfaint}Ex 2 \textbullet\ 2 blanks}\quad
+\textbf{What did the plate solve buy us?} Find the plate scale in arcsec/pixel and the field of
+view in arcmin.
+\end{itemize}
+\recordline{Watch for}{a depth gain that falls short of $\sqrt{N}$. That is real, not an
+error: warping resamples pixels, which correlates neighbours, and correlated noise does not
+average down as fast as the formula assumes.}
+\end{nbbox}
+
+\begin{nbbox}{04}{Phase 3 --- Photometry \& zero point \quad\textnormal{\sffamily\scriptsize\color{inkfaint}$\sim$25 min}}
+\small\color{inksoft} Sources are detected and measured, a zero point is derived by
+cross-matching against a reference catalog, and a catalog with magnitudes and errors is
+written. This is the notebook that needs internet.
+\par\vspace{6pt}\color{ink}
+{\sffamily\bfseries\small Exercises}
+\begin{itemize}
+\item[] {\ttfamily\scriptsize\color{inkfaint}Ex 1 \textbullet\ 2 blanks}\quad
+\textbf{Check the zero-point arithmetic.} Recompute magnitude and error from flux and the
+header; find the largest residual, and which term dominates for the brightest star.
+\item[] {\ttfamily\scriptsize\color{inkfaint}Ex 2 \textbullet\ 2 blanks}\quad
+\textbf{Your assigned star.} Fill in \texttt{ASSIGNED\_NUMBER} or \texttt{ASSIGNED\_RADEC} at
+the top of the cell, then report the magnitude, its uncertainty, and which half of the error
+budget dominates.
+\end{itemize}
+\end{nbbox}
+
+\begin{caution}[If there is no zero point]
+Phase 3 writes \cm{\_fluxcal.fits} only when it measures one. Without it the catalog still
+exists, carrying instrumental magnitudes, and the notebook falls back to those automatically
+--- every shape you are asked about survives, only the zero of the scale is arbitrary.
+Exercise 1 skips itself and says so.
+\end{caution}
+
+% =====================================================================
+\section{What to hand in}
+% =====================================================================
+One line, from Exercise 2 of notebook 04:
+
+\vspace{4pt}
+\begin{tabularx}{\textwidth}{@{}p{5.4cm}X@{}}
+\toprule
+\thead{Item} & \thead{Example} \\
+\midrule
+Which star & \cm{NUMBER 7, RA 278.98621, Dec -23.79178} \\
+Magnitude $\pm$ uncertainty & \cm{13.756 $\pm$ 0.017} \\
+Dominant error term & \cm{zero point} \\
+Filter and frames stacked & \cm{Blue, 3 frames} \\
+\bottomrule
+\end{tabularx}
+
+\begin{note}[Quote it properly]
+A magnitude without an uncertainty is not a measurement, and one written to more digits than
+its uncertainty supports is a claim you cannot defend. Round the value to the precision the
+error allows --- the notebook does this for you, and it is worth understanding why.
+\end{note}
+
+% =====================================================================
+\section{When something breaks}
+% =====================================================================
+\begin{longtable}{@{}p{5.6cm}p{9.2cm}@{}}
+\toprule
+\thead{What you see} & \thead{What it means \& what to do} \\
+\midrule
+\endhead
+\cm{NameError: name 'FILL\_IN'\newline is not defined} &
+A blank you have not filled yet. The traceback names the line. \\
+\cm{NameError} on a name from the config cell &
+Your kernel imported the config before it was last edited. \textbf{Kernel $\rightarrow$
+Restart}, then run from the first cell. \\
+Notebook 01 says \textbf{STOP} &
+A calibration frame is unusable. Do not reduce past it --- the numbers will look fine and be
+wrong. Raise it in the room. \\
+\cm{solve-field: NOT FOUND} &
+Expected on a pip install. The in-process solver is used instead. Only a problem if Phase 2
+fails to solve. \\
+Phase 3: \emph{zero point failed}, no \cm{\_fluxcal.fits} &
+The cross-match found no usable stars in your image. The catalog is still written with
+instrumental magnitudes and the exercises adapt. Worth investigating, not worth blocking on. \\
+Phase 3 hangs or times out &
+It is querying an online reference catalog. Check your connection; the query caches, so a
+second run is fast. \\
+\cm{conda not found} &
+Miniforge is not installed, or you did not reopen the terminal after installing it. On Windows,
+make sure you are inside the Ubuntu (WSL) window, not PowerShell. \\
+A phase takes far longer than the estimate &
+Normal on a laptop for a full night. Watch the progress bars; they move per frame. On WSL,
+also check the repository is in your Linux home rather than under \cm{/mnt/c} --- that alone
+can cost several times the runtime. \\
+\bottomrule
+\end{longtable}
+
+Still stuck? \cm{cassa-doctor} prints the state of the whole install in one screen. Bring that
+output rather than a description.
+
+\vspace{18pt}
+{\color{rule}\hrule}
+\vspace{8pt}
+{\sffamily\scriptsize\color{inkfaint}
+CASSA Observatory \textbullet\ Independent University, Bangladesh --- rooftop observatory,
+Dhaka.\\
+Pipeline documentation lives in the repository: \texttt{README.md} and
+\texttt{docs/CUSTOMIZING.md}.}
+
+\end{document}

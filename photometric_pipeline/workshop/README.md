@@ -4,12 +4,14 @@ Materials for a two-part workshop on the `cassa-photometry` pipeline:
 
 - **Lecture** — `slides/cassa_photometry_lecture.tex` (Beamer): the ideas, operations,
   and stages of the pipeline, with optional math asides.
-- **Hands-on** — `notebooks/00…05`: run all four phases on real frames, inspecting
-  the SCI/ERR/DQ planes and the catalog at each step.
+- **Hands-on** — `notebooks/00…06`: run all four phases on simulated CASSA
+  8-inch frames whose **true answers are known**, inspecting the SCI/ERR/DQ
+  planes and the catalog at each step, and scoring the result against truth.
 
-Phase 2 plate-solves against a **shared local Astrometry.net index** (no network).
-Phase 3's zero-point cross-match queries online reference catalogs
-(APASS/Pan-STARRS/SDSS), so that one step needs outbound internet on the node.
+Phase 2 plate-solves against Astrometry.net index files, which the pipeline
+**fetches automatically** for the field (about 165 MB for this one) unless a
+local set is already available. Phase 3's zero point queries reference catalogs
+online the first time and caches them, after which `--offline` works.
 
 Each phase writes into its own directory under `work/`:
 `work/phase1` (calibrated) → `phase2` (masters + WCS) → `phase3` (catalogs) →
@@ -18,32 +20,85 @@ Each phase writes into its own directory under `work/`:
 ```
 workshop/
 ├── slides/     cassa_photometry_lecture.tex   # Beamer lecture
-├── notebooks/  00_setup … 05_phase4_diagnostics.ipynb
-├── raw/        the provided dataset  (not in git -- see below)
+├── notebooks/  00_setup … 04_phase3_photometry.ipynb
+├── raw/        the dataset  (not in git -- generate it, see below)
 └── work/       pipeline output       (not in git; created when you run)
 ```
 
 ### The dataset
 
-`raw/` is **not committed** (155 MB of FITS). Obtain the workshop frames
-separately and unpack them into `workshop/raw/`, or point `RAW_DIR` at wherever
-you keep them. The set is one night of NGC 7331 in B/V/R plus its calibration
-frames: 14 science, 43 flats, 10 darks, 10 bias.
+`raw/` holds whatever tree you put there: the notebooks and the pipeline search
+it recursively, so a night straight from the acquisition software —
+
+```
+raw/20260903/BIAS/untargeted/   20260903T054529.715412_untargeted_Blue_BIAS_....fits
+raw/20260903/DARK/untargeted/   ...
+raw/20260903/FLAT/untargeted/   ...
+raw/20260903/LIGHT/m22/         20260903T043707.171323_m22_Luminance_LIGHT_....fits
+```
+
+— is used as-is, and so is the flat directory the simulator writes. Frames are
+sorted by their `IMAGETYP`/`FILTER`/`EXPTIME` headers, never by folder name.
+Notebook 00 prints what it found, directory by directory.
+
+**Or generate one — there is nothing to download.**
+
+```bash
+cd workshop
+cassa-simulate --preset workshop --out .
+```
+
+That writes `raw/` (65 frames: 15 science in B/V/R, 30 flats, 10 darks, 10 bias)
+plus three truth files. It takes a couple of minutes and is **reproducible from
+a seed**, so everyone in the room has bit-identical frames.
+
+The data simulate the CASSA 8-inch f/5 + IMX585 on NGC 7331: one night, a
+2048×1400 window (20.4′ × 14.0′) at 0.598″/px. The star field is **real** — Gaia
+DR3 positions with synthetic Johnson-Cousins magnitudes — so the frames
+genuinely plate-solve and the reference-catalog cross-match genuinely finds the
+stars.
+
+What makes it worth learning on is the truth files:
+
+| File | Contents |
+|---|---|
+| `truth_sources.csv` | every source's position, type and **true magnitude** per band |
+| `truth_frames.csv` | every frame's true seeing, transparency, airmass and zero point |
+| `truth_config.yaml` | the detector and photometric model used |
+
+So every measurement in the notebooks can be scored, not just inspected. That is
+the point: a reduction that *looks* right and a reduction that *is* right are
+not distinguishable by eye.
+
+Working with your own data instead? Point `RAW_DIR` at it and skip the
+generation step; everything else works the same, minus the truth comparisons.
 
 ## Prerequisites (once, per HPC account)
 
-1. **Environment + package** (see the top-level pipeline README for detail):
+1. **Environment + package** — install [Miniforge](https://conda-forge.org/download/),
+   then one command from a clone:
    ```bash
-   conda activate image_processing
-   pip install -e /path/to/photometric_pipeline --no-deps --no-build-isolation
+   cd /path/to/photometric_pipeline
+   ./install.sh
    ```
-2. **Astrometry.net index files** — one shared read-only copy, pointed to via an
-   environment variable (no hard-coded path overrides this):
+   This brings JupyterLab too. On Windows, do it inside WSL — there is no plate
+   solver for native Windows. `workshop/handbook/participant_handbook.pdf` walks
+   through it for all three platforms.
+2. **Astrometry.net index files** — nothing to do. The pipeline fetches the few
+   this field needs. On a shared machine that already holds a full set, point at
+   it instead and nothing is downloaded:
    ```bash
    export CASSA_ASTROMETRY_INDEX=/path/to/astrometry_data
    ```
-3. **Network** — the Phase 3 cross-match reaches APASS/Pan-STARRS/SDSS, so the
-   compute node must have outbound internet for notebook `04`.
+3. **Network** — needed once, for notebook `04`'s reference-catalog query and
+   (unless a local index set exists) for the index fetch. Both are cached, so a
+   second pass runs offline. On a compute node with no outbound access, run
+   notebook `04` once somewhere that has it, or use
+   `cassa-index-fetch --from-headers raw/` and `--offline` afterwards.
+4. **Check it all works** before the session:
+   ```bash
+   cassa-doctor
+   ```
 
 ## Building the lecture PDF
 
@@ -57,29 +112,33 @@ stock Beamer themes so it compiles anywhere.
 
 ## Running the hands-on notebooks
 
-Start Jupyter in the `image_processing` env and run the notebooks **in order**.
-Notebook `00` is a setup check and `01` is self-contained (it fabricates its own
-example file); `02`–`05` each depend on the previous notebook's outputs.
+Start Jupyter in the `cassa-photometry` env and run the notebooks **in order**.
+Notebook `00` checks the environment and `01` reads only the raw frames; `02`–`04`
+each depend on the previous notebook's outputs.
 
-Every notebook ends with **exercises that have worked solutions** — the point is
-to read and re-run them, then change something and see what moves.
+Notebooks `02`-`04` each end with **two exercises that have worked solutions**.
+Each asks for one or two specific values, with the answer from the reference
+reduction printed beside it, so you can tell at a glance whether your run agrees.
 
 | Notebook | What it does |
 |----------|--------------|
 | `00_setup` | Verify env, package, index dir, `solve-field`, dataset. |
-| `01_data_model_sci_err_dq` | Inventory the raw frames; build a toy MEF and decode SCI / ERR / DQ. |
-| `02_phase1_calibration` | Run ISR → `calibrated_*.fits`; watch ERR/DQ populate. |
+| `01_raw_frame_health` | Inventory the raw frames, then health-check them: a go/no-go verdict before anything is reduced. |
+| `02_phase1_calibration` | Run ISR → `calibrated_*.fits`; watch ERR/DQ populate, then audit the bad-pixel mask. |
 | `03_phase2_integration` | Align + stack + WCS-solve → `Master_*.fits`. |
-| `04_phase3_photometry` | Zero point (online catalog) → catalog CSV + fluxcal. |
-| `05_phase4_diagnostics` | Generate and read the diagnostics report. |
+| `04_phase3_photometry` | Zero point, aperture correction, classification → catalog CSV + fluxcal; ends by measuring **your own assigned star**. |
 
-**Before running:** the config cell at the top of each notebook defaults to paths
-*relative to the notebooks directory* — `../raw`, `../work`, and
-`../../astrometry_data` — which work as-is if you launch Jupyter from
-`workshop/notebooks/` with the layout above. On a shared machine where the index
-files live elsewhere, edit that cell (the block marked `EDIT THESE PATHS`) or set
-`CASSA_ASTROMETRY_INDEX` in your environment. The cell fails immediately with a
-clear message if `RAW_DIR` does not exist.
+**Before running:** every notebook opens with
 
-> Notebooks 02–05 assume the provided dataset is a single target/filter for a clean
-> walkthrough. For multi-filter datasets, repeat Phase 3 per filter.
+```python
+from workshop_config import *
+```
+
+which resolves `RAW_DIR`, `WORK_DIR` and the per-phase directories relative to
+`workshop/`, and fails immediately with a clear message if the dataset has not
+been generated. It is one file (`notebooks/workshop_config.py`) rather than the
+same thirty lines copied into each notebook, so changing a path changes it
+everywhere.
+
+> The dataset is B/V/R. Phases 1–3 handle all three filters in one pass; the
+> notebooks inspect one filter at a time and say which.

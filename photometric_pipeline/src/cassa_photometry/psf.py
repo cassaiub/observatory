@@ -1,0 +1,258 @@
+"""Point-spread function measurement, shared by every phase.
+
+Lives at the top level beside ``fits_utils`` and ``paths`` because it is no
+longer a diagnostics concern: phase 1 stamps ``FWHMPX`` on every calibrated
+frame, phase 2 measures the stack's own PSF and weights on it, and phase 3 sizes
+every aperture from it. ``phase4_diagnostics.psf`` re-exports this module so
+existing imports keep working.
+
+Stage-independent measurements: detect stars, fit their profiles to estimate the
+FWHM and ellipticity, build a stacked radial profile, and summarise basic image
+statistics. Uses tools already relied on elsewhere in the package (DAOStarFinder,
+Background2D) plus astropy.modeling for the 2D Gaussian fit.
+"""
+
+import warnings
+
+import numpy as np
+from astropy.modeling import fitting, models
+from astropy.stats import sigma_clip, sigma_clipped_stats
+from photutils.background import Background2D, MedianBackground
+from photutils.detection import DAOStarFinder
+
+_FWHM_PER_SIGMA = 2.3548200450309493  # 2*sqrt(2*ln2)
+
+
+def image_stats(data):
+    """Return basic robust statistics of an image."""
+    finite = data[np.isfinite(data)]
+    mean, median, std = sigma_clipped_stats(finite, sigma=3.0)
+    dmax = float(np.max(finite)) if finite.size else np.nan
+    return {
+        "min": float(np.min(finite)) if finite.size else np.nan,
+        "max": dmax,
+        "median": float(median),
+        "mean": float(mean),
+        "std": float(std),
+        "p1": float(np.percentile(finite, 1)) if finite.size else np.nan,
+        "p99": float(np.percentile(finite, 99)) if finite.size else np.nan,
+        # Fraction of pixels near the peak value (a rough "hot/saturated" gauge).
+        "hot_frac": float(np.mean(finite >= 0.95 * dmax)) if finite.size else np.nan,
+    }
+
+
+def background_rms(data, box=(64, 64)):
+    """Return the median 2D-background RMS (falls back to a robust scalar)."""
+    try:
+        bkg = Background2D(data, box, filter_size=(3, 3), bkg_estimator=MedianBackground())
+        return float(np.nanmedian(bkg.background_rms))
+    except Exception:
+        _, _, std = sigma_clipped_stats(data, sigma=3.0)
+        return float(std)
+
+
+def detect_stars(data, fwhm_guess=3.5, threshold=5.0):
+    """Detect point sources with DAOStarFinder; returns a table or None."""
+    _, median, std = sigma_clipped_stats(data, sigma=3.0)
+    if not np.isfinite(std) or std <= 0:
+        return None
+    finder = DAOStarFinder(fwhm=fwhm_guess, threshold=threshold * std)
+    return finder(np.nan_to_num(data - median))
+
+
+def _isolated_bright_stars(sources, shape, cutout, max_stars):
+    """Pick isolated, non-edge stars, brightest first (saturation handled at fit time)."""
+    ny, nx = shape
+    order = np.argsort(sources["flux"])[::-1]
+    xs = np.asarray(sources["xcentroid"])
+    ys = np.asarray(sources["ycentroid"])
+
+    chosen = []
+    for i in order:
+        x, y = xs[i], ys[i]
+        if x < cutout or x > nx - cutout or y < cutout or y > ny - cutout:
+            continue
+        # Reject if another detected source sits within 2 cutouts.
+        d = np.hypot(xs - x, ys - y)
+        d[i] = np.inf
+        if np.any(d < 2 * cutout):
+            continue
+        chosen.append((x, y))
+        if len(chosen) >= max_stars:
+            break
+    return chosen
+
+
+def _least_squares_fitter():
+    """A non-linear least-squares fitter that is not deprecated.
+
+    ``LevMarLSQFitter`` is deprecated from astropy 6; ``TRFLSQFitter`` is the
+    replacement and is more robust at the bounds. Older astropy keeps working.
+    """
+    if hasattr(fitting, "TRFLSQFitter"):
+        return fitting.TRFLSQFitter()
+    return fitting.LevMarLSQFitter()
+
+
+def _fit_gaussian_fwhm(cutout):
+    """Fit a 2D Gaussian + constant to a star cutout -> (fwhm_px, ellipticity)."""
+    ny, nx = cutout.shape
+    yy, xx = np.mgrid[0:ny, 0:nx]
+    bg = np.median(cutout)
+    peak = float(np.max(cutout) - bg)
+    if peak <= 0:
+        return None
+    g = models.Gaussian2D(amplitude=peak, x_mean=nx / 2, y_mean=ny / 2,
+                          x_stddev=2.0, y_stddev=2.0) + models.Const2D(bg)
+    fitter = _least_squares_fitter()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            fit = fitter(g, xx, yy, cutout, maxiter=200)
+        except Exception:
+            return None
+    sx, sy = abs(fit.x_stddev_0.value), abs(fit.y_stddev_0.value)
+    if not (np.isfinite(sx) and np.isfinite(sy)) or max(sx, sy) > nx:
+        return None
+    fwhm = _FWHM_PER_SIGMA * np.sqrt(sx * sy)          # geometric-mean FWHM
+    ellip = 1.0 - min(sx, sy) / max(sx, sy)
+    return fwhm, ellip
+
+
+def _radial_profile(cutout, nbins=None):
+    """Azimuthally-averaged, peak-normalised radial profile of one cutout."""
+    ny, nx = cutout.shape
+    cy, cx = (ny - 1) / 2, (nx - 1) / 2
+    yy, xx = np.mgrid[0:ny, 0:nx]
+    r = np.hypot(xx - cx, yy - cy)
+    bg = np.median(cutout)
+    prof = cutout - bg
+    peak = np.max(prof)
+    if peak <= 0:
+        return None
+    prof = prof / peak
+    rmax = int(min(cx, cy))
+    nbins = nbins or rmax
+    bins = np.linspace(0, rmax, nbins + 1)
+    idx = np.digitize(r.ravel(), bins) - 1
+    vals = prof.ravel()
+    radii, profile = [], []
+    for b in range(nbins):
+        m = idx == b
+        if np.any(m):
+            radii.append(0.5 * (bins[b] + bins[b + 1]))
+            profile.append(np.mean(vals[m]))
+    return np.array(radii), np.array(profile)
+
+
+def estimate_fwhm(data, fwhm_guess=3.5, threshold=5.0, pixscale=None,
+                  max_stars=25, cutout=15):
+    """Estimate the image FWHM by fitting isolated bright stars.
+
+    Returns
+    -------
+    dict with keys: ``fwhm_px``, ``fwhm_arcsec`` (or None), ``ellipticity``,
+    ``n_detected``, ``n_used``, ``radii``, ``profile`` (stacked radial profile),
+    and ``positions`` (list of (x, y) used).
+    """
+    result = {"fwhm_px": np.nan, "fwhm_arcsec": None, "ellipticity": np.nan,
+              "n_detected": 0, "n_used": 0, "radii": None, "profile": None,
+              "positions": []}
+    sources = detect_stars(data, fwhm_guess, threshold)
+    if sources is None or len(sources) == 0:
+        return result
+    result["n_detected"] = len(sources)
+
+    stars = _isolated_bright_stars(sources, data.shape, cutout, max_stars)
+    half = cutout // 2
+    fwhms, ellips, profiles, used = [], [], [], []
+    for x, y in stars:
+        xi, yi = int(round(x)), int(round(y))
+        cut = data[yi - half:yi + half + 1, xi - half:xi + half + 1]
+        if cut.shape != (cutout, cutout) or not np.all(np.isfinite(cut)):
+            continue
+        # Skip truly saturated stars: a flat top has many pixels at the peak value.
+        if np.sum(cut == np.max(cut)) > 3:
+            continue
+        fit = _fit_gaussian_fwhm(cut)
+        if fit is None:
+            continue
+        fwhms.append(fit[0])
+        ellips.append(fit[1])
+        used.append((x, y))
+        rp = _radial_profile(cut)
+        if rp is not None:
+            profiles.append(rp)
+
+    if not fwhms:
+        return result
+    fwhms = np.array(fwhms)
+    clipped = fwhms[~sigma_clip(fwhms, sigma=3.0, maxiters=3).mask]
+    fwhm_px = float(np.median(clipped)) if clipped.size else float(np.median(fwhms))
+
+    result["fwhm_px"] = fwhm_px
+    result["fwhm_arcsec"] = None if not pixscale else fwhm_px * float(pixscale)
+    result["ellipticity"] = float(np.median(ellips))
+    result["n_used"] = len(fwhms)
+    result["positions"] = used
+
+    if profiles:
+        # Interpolate each profile onto a common radial grid, then average.
+        rmax = min(p[0][-1] for p in profiles)
+        grid = np.linspace(0, rmax, 20)
+        stack = [np.interp(grid, r, p) for r, p in profiles]
+        result["radii"] = grid
+        result["profile"] = np.mean(stack, axis=0)
+    return result
+
+
+def build_epsf(data, fwhm_result, oversampling=2, size=25, max_stars=25):
+    """Build an empirical PSF from a frame's own isolated stars.
+
+    Returns ``(model, info)``. ``model`` is ``None`` when the frame cannot
+    support a fit, with ``info["reason"]`` saying why -- every caller then falls
+    back to an analytic Gaussian of the measured FWHM. A poor PSF must degrade,
+    not crash: a sparse high-latitude field is a normal thing to observe.
+
+    ``fwhm_result`` is what :func:`estimate_fwhm` returns; its ``positions`` are
+    already the isolated, unsaturated, bright stars an EPSF wants, so this does
+    not repeat that selection.
+    """
+    info = {"n_stars": 0, "reason": None, "fwhm_px": None}
+    if not fwhm_result:
+        info["reason"] = "no FWHM measurement"
+        return None, info
+
+    positions = fwhm_result.get("positions") or []
+    info["fwhm_px"] = fwhm_result.get("fwhm_px")
+    if len(positions) < 4:
+        info["reason"] = f"only {len(positions)} usable star(s); need at least 4"
+        return None, info
+
+    try:
+        from astropy.nddata import NDData
+        from astropy.table import Table
+        from photutils.psf import EPSFBuilder, extract_stars
+    except ImportError:  # pragma: no cover - photutils is a hard dependency
+        info["reason"] = "photutils.psf is unavailable"
+        return None, info
+
+    try:
+        finite = np.nan_to_num(np.asarray(data, dtype=float), nan=0.0)
+        _, median, _ = sigma_clipped_stats(finite, sigma=3.0)
+        table = Table()
+        table["x"] = [float(p[0]) for p in positions[:max_stars]]
+        table["y"] = [float(p[1]) for p in positions[:max_stars]]
+
+        stars = extract_stars(NDData(data=finite - median), table, size=size)
+        if len(stars) < 4:
+            info["reason"] = f"only {len(stars)} star(s) survived extraction"
+            return None, info
+
+        builder = EPSFBuilder(oversampling=oversampling, maxiters=6, progress_bar=False)
+        model, _ = builder(stars)
+        info["n_stars"] = len(stars)
+        return model, info
+    except Exception as exc:
+        info["reason"] = f"{type(exc).__name__}: {exc}"
+        return None, info
