@@ -49,29 +49,33 @@ def _version_of(module_name):
 
 
 def check_platform():
-    """The pipeline targets Linux and macOS. Native Windows is not supported.
+    """Linux and macOS are verified; native Windows is provisional.
 
-    Reported here rather than left to fail later, because the later failure is
-    unhelpful: an environment that builds and then dies part-way through a run
-    tells the user nothing about why.
+    Windows used to be reported as a hard failure, on the grounds that no plate
+    solver was published for it. That is no longer true: ASTAP ships
+    command-line builds for win64, win32 and ARM64, and every runtime
+    dependency has a Windows wheel. So the pieces are all present, and
+    ``install.ps1`` now installs them.
 
-    This is a scope decision about what is *tested*, not a claim that nothing
-    could work. ASTAP does publish a Windows build, so a plate solver exists
-    there now; what does not exist is a native install path -- ``install.sh`` is
-    a shell script, the packaging classifiers and the test suite cover Linux and
-    macOS, and no native Windows configuration has been verified end to end.
+    What is still missing is evidence. No native Windows install has been
+    verified end to end, so this reports ``WARN`` rather than ``OK`` -- enough
+    to say "this may work and nobody has checked", without the exit status
+    claiming a failure that may not exist. WSL remains the route the project
+    tests, and it is real x86-64 Linux, so every instruction applies unchanged
+    inside it.
 
-    WSL is real x86-64 Linux, so it is not a separate target: every instruction
-    applies unchanged inside it, and it is the route that is actually tested.
+    When a Windows install has been confirmed, this becomes ``OK`` and the
+    wording goes with it.
     """
     system = platform.system()
     detail = f"{system} {platform.machine()}"
     if system == "Windows":
         return Check(
-            "platform", FAIL, f"{detail} (native Windows is not supported)",
-            "Install WSL and run the pipeline inside it: `wsl --install` from an "
-            "admin PowerShell, then follow the Linux instructions unchanged. "
-            "See install.ps1 or workshop/handbook/participant_handbook.pdf.",
+            "platform", WARN,
+            f"{detail} (native Windows support is provisional -- not yet verified)",
+            "It should work: run `.\\install.ps1`. If anything fails, "
+            "`.\\install.ps1 -Wsl` prints the tested WSL route. Either way, "
+            "please report what this command printed.",
         )
     return Check("platform", OK, detail)
 
@@ -198,6 +202,8 @@ def check_solvers():
     else:
         checks.append(Check(
             "solver: astap", WARN, "not on PATH",
+            ".\\install.ps1   # or unpack https://www.hnsky.org/astap.htm yourself"
+            if platform.system() == "Windows" else
             "apt install astap-cli   # or https://www.hnsky.org/astap.htm",
         ))
 
@@ -207,7 +213,10 @@ def check_solvers():
             Check("solver: solve-field", OK, f"{executable} ({_solve_field_version(executable)})")
         )
     else:
-        checks.append(Check("solver: solve-field", WARN, "not on PATH"))
+        checks.append(Check(
+            "solver: solve-field", WARN,
+            "not published for Windows" if platform.system() == "Windows"
+            else "not on PATH"))
 
     try:
         import astrometry as _astrometry
@@ -230,7 +239,11 @@ def check_solvers():
                 )
             )
     except ImportError:
-        checks.append(Check("solver: in-process", WARN, "PyPI 'astrometry' not installed"))
+        checks.append(Check(
+            "solver: in-process", WARN,
+            "PyPI 'astrometry' publishes no Windows wheel"
+            if platform.system() == "Windows"
+            else "PyPI 'astrometry' not installed"))
 
     if all(c.status != OK for c in checks):
         checks.append(
@@ -238,6 +251,8 @@ def check_solvers():
                 "solver: any",
                 FAIL,
                 "no usable plate solver -- phase 2 cannot solve a WCS",
+                ".\\install.ps1   # installs ASTAP, the one backend Windows has"
+                if platform.system() == "Windows" else
                 "apt install astap-cli   "
                 '# or: pip install "cassa-photometry[solver]"',
             )

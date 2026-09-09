@@ -369,6 +369,23 @@ Phase 4 measures rather than decides, so these only steer what it looks at.
 | `mag_binsize` | `0.5` | Magnitude bin width for number counts. |
 | `hist_bins` | `30` | Histogram bins. |
 
+### Plate-solver availability by platform
+
+Any one backend is enough. This is why ASTAP is tried first — it is the only one
+published for every platform the pipeline runs on.
+
+| Platform | `astap` | `solve-field` | `astrometry-py` |
+|---|:---:|:---:|:---:|
+| Linux x86-64 | ✓ | ✓ | ✓ |
+| Linux aarch64 | ✓ | — | — |
+| macOS Intel | ✓ | ✓ | ✓ |
+| macOS Apple Silicon | ✓ | — | ✓ |
+| Windows x64 / x86 / ARM64 | ✓ | — | — |
+
+conda-forge publishes `astrometry` for `linux-64` and `osx-64` only; PyPI's
+`astrometry` publishes no aarch64 and no Windows wheel. Verified 2026-09-09
+against both indexes.
+
 ---
 
 ## 3. Environment variables
@@ -716,12 +733,12 @@ the number of failures.
 
 | Check | What it establishes |
 |---|---|
-| `platform` | Linux or macOS. Native Windows fails here, pointing at WSL, rather than letting the run die later at the solver. |
+| `platform` | Linux and macOS report OK. **Windows reports WARN** — native support is provisional: everything needed is present and `install.ps1` installs it, but no Windows install has been verified end to end. It is a warning rather than a failure so the exit status does not claim a problem that may not exist. |
 | `python` | Interpreter version against the floor in `pyproject.toml`. |
 | `cassa-photometry` | The pipeline's own version, whether it is an editable install, and where it lives. |
 | `dependencies` | Every declared runtime requirement, against its minimum. |
 | `solver: astap` | Whether the ASTAP binary is on `PATH` or at `phase2.astap_path`. |
-| `solver: solve-field` | Whether the Astrometry.net binary is available, and its version. |
+| `solver: solve-field` | Whether the Astrometry.net binary is available, and its version. On Windows it reports *not published for Windows* rather than *not on PATH* — there is nothing to go and install. |
 | `solver: in-process` | Whether the importable `astrometry` is the PyPI solver rather than the conda bindings — they share a name, and only one of them can solve. |
 | `solver: any` | Appears **only when none is usable**, and fails: phase 2 cannot solve a WCS, so phase 3 has no zero point. |
 | `solver: in use` | Which backend a run would actually pick — usually what a support question is really about. |

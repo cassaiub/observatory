@@ -314,23 +314,31 @@ macOS Intel & \texttt{./install.sh} & Identical to Linux x86-64. \\
 \hline
 macOS Apple Silicon & \texttt{./install.sh} & \texttt{solve-field} has no \texttt{osx-arm64} build; ASTAP or the in-process solver is used. \\
 \hline
-Windows & WSL, then the Linux route & Real x86-64 Linux, so every instruction applies unchanged inside it. \\
+Windows x64 / ARM64 & \texttt{.\textbackslash install.ps1} & \textbf{Provisional.} ASTAP is the one backend published for Windows, and the installer fetches it. Not yet verified end to end. \\
+\hline
+Windows, tested route & WSL, then the Linux route & Real x86-64 Linux, so every instruction applies unchanged inside it. \\
 \hline
 \end{tabularx}
 \end{center}
 
 \begin{mdframed}[backgroundcolor=procbg, linecolor=secondary, linewidth=1.5pt, roundcorner=4pt]
-\textbf{Why Windows goes through WSL.} ASTAP does publish a Windows build, so
-the plate solver is no longer the obstacle it was when this decision was taken.
-What is missing is everything around it: \texttt{install.sh} is a shell script,
-the test suite and the packaging classifiers target Linux and macOS, and no
-native Windows configuration has been verified end to end. WSL is the route that
-is tested, so it is the route that is documented and supported.
+\textbf{Windows: two routes, and why there are two.} Windows was originally
+unsupported on the grounds that no plate solver was published for it. That is no
+longer true. ASTAP ships command-line builds for \texttt{win64},
+\texttt{win32} and ARM64, and all sixteen runtime dependencies have Windows
+wheels or are pure Python --- so \texttt{install.ps1} now builds a real
+environment rather than printing instructions.
 
-Running \texttt{install.ps1} from PowerShell installs nothing; it prints the WSL
-setup steps and stops. \texttt{cassa-doctor} likewise reports native Windows as
-a failure with the same guidance, rather than letting a run build successfully
-and then die at the first WCS solve.
+What is missing is \emph{evidence}. No native Windows install has been verified
+end to end, so \texttt{cassa-doctor} reports the platform as \textbf{provisional}
+--- a warning, not a failure, because failing would assert a problem nobody has
+observed while passing silently would assert a guarantee nobody has earned.
+
+\textbf{For anything with a deadline, use WSL.} It is real x86-64 Linux and it is
+the configuration this project exercises. \texttt{.\textbackslash install.ps1
+-Wsl} prints those steps without installing anything. For your own machine, the
+native route is worth trying --- and a report either way is what turns
+``provisional'' into ``supported''.
 \end{mdframed}
 
 \subsection{Installing on Linux}
@@ -385,7 +393,35 @@ xattr -d com.apple.quarantine "$(command -v astap_cli)"
 \end{lstlisting}
 \end{mdframed}
 
-\subsection{Installing on Windows (through WSL)}
+\subsection{Installing on Windows}
+\subsubsection{Native (provisional)}
+\begin{lstlisting}[language=bash]
+git clone https://github.com/cassaiub/observatory.git
+cd observatory\photometric_pipeline
+.\install.ps1
+cassa-doctor
+\end{lstlisting}
+
+\texttt{install.ps1} mirrors \texttt{install.sh}: it picks an environment (an
+active conda environment, else conda, else a plain \texttt{venv} in
+\texttt{.\textbackslash.venv}), installs the package, fetches the ASTAP
+command-line build matching the machine's architecture, and finishes by running
+\texttt{cassa-doctor}. It takes the same options, in PowerShell form:
+\texttt{-Conda}, \texttt{-Venv}, \texttt{-NewEnv}, \texttt{-EnvName},
+\texttt{-NoDev}, \texttt{-NoDoctor}, and \texttt{-Wsl}.
+
+\begin{mdframed}[backgroundcolor=rawbg, linecolor=primary, linewidth=1pt, roundcorner=4pt]
+\textbf{One trap worth knowing about}, because it is invisible when it happens.
+SourceForge serves a \emph{browser} an HTML ``your download will start shortly''
+page instead of the file, and PowerShell's \texttt{Invoke-WebRequest} identifies
+itself as a browser by default --- so the naive download lands a 114\,KB HTML
+document named \texttt{astap.zip}. The installer therefore asks with a
+non-browser user agent, and then verifies the result really is a ZIP by its
+magic bytes before trusting it, rather than leaving a broken solver to surface
+at the first plate solve.
+\end{mdframed}
+
+\subsubsection{Through WSL (the tested route)}
 Two stages: install WSL once from Windows, then follow the Linux instructions
 inside it.
 
@@ -398,7 +434,8 @@ wsl --install
     finish creating your user account.
 
     \item Everything from here is the Linux procedure above, typed inside that
-    Ubuntu window.
+    Ubuntu window. \texttt{.\textbackslash install.ps1 -Wsl} prints these steps
+    without installing anything.
 \end{enumerate}
 
 \begin{mdframed}[backgroundcolor=procbg, linecolor=accent, linewidth=1.5pt, roundcorner=4pt]
@@ -448,10 +485,14 @@ Phase 2 needs a plate solver. The installer tries \textbf{ASTAP} first, then
 then the \textbf{in-process} PyPI solver; the first that installs wins, and
 \texttt{solver: auto} then prefers whichever is present in the same order.
 
-ASTAP leads because it is a sub-megabyte binary with no Python dependency,
-packaged as \texttt{astap-cli} on Debian and Ubuntu and published for Linux
-x86-64 and aarch64 and for macOS on both Intel and Apple Silicon --- it is the
-only backend that exists on ARM Linux at all. On the CASSA test data it solved
+ASTAP leads because it is the only backend published for every platform this
+pipeline runs on, and the gap is not marginal: conda-forge builds
+\texttt{astrometry} for \texttt{linux-64} and \texttt{osx-64} \emph{only}, and
+PyPI's \texttt{astrometry} publishes no aarch64 and no Windows wheel (both
+verified against the indexes on 2026-09-09). Without ASTAP an ARM Linux machine
+and any Windows machine have \textbf{no solver at all}, and an Apple Silicon Mac
+has only the in-process one. It is also a sub-megabyte binary with no Python
+dependency, packaged as \texttt{astap-cli} on Debian and Ubuntu. On the CASSA test data it solved
 in \textbf{0.11\,s} against 41\,s for the in-process solver, and it recovered the
 true plate scale from a header that stated it wrongly.
 
@@ -473,7 +514,7 @@ would quietly depend on which solver a given machine happened to install.
 \hline
 \textbf{Backend} & \textbf{Where it comes from} & \textbf{Available on} \\
 \hline
-\texttt{astap} & \texttt{apt install astap-cli}, else the upstream zip & Linux x86-64 and aarch64, macOS Intel and Apple Silicon \\
+\texttt{astap} & \texttt{apt install astap-cli}, else the upstream zip & Linux x86-64 and aarch64, macOS Intel and Apple Silicon, Windows x64/x86/ARM64 \\
 \hline
 \texttt{solve-field} & conda-forge \texttt{astrometry}, or a system package & Linux x86-64, macOS Intel \\
 \hline

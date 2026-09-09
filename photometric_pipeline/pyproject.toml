@@ -16,13 +16,16 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Topic :: Scientific/Engineering :: Astronomy",
     "Intended Audience :: Science/Research",
-    # Linux and macOS only, and deliberately so: phase 2 needs a plate solver
-    # and none is published for Windows. Windows users run this inside WSL,
-    # which is x86-64 Linux and therefore not a separate target. Declaring the
-    # supported systems here is what stops a native Windows `pip install` from
-    # looking like an endorsed configuration.
+    # Linux and macOS are verified. Windows is listed because every piece is
+    # now present -- ASTAP publishes win64/win32/ARM64 command-line builds, and
+    # every runtime dependency has a Windows wheel -- and install.ps1 installs
+    # them. It is not yet verified end to end, which is why `cassa-doctor`
+    # reports native Windows as provisional rather than OK, and why the
+    # documentation still recommends WSL. Remove the Development Status caveat
+    # in the docs, not this classifier, once a Windows install is confirmed.
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
 ]
 
 # Version floors are set where an API or behaviour break is real, not by habit:

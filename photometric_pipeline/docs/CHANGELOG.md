@@ -53,6 +53,26 @@ instrument layer built around the CASSA 8-inch.
   field 65 s from a cold cache, **1.2 s** for the next with no download.
   `astap_db_download: false` still performs the selection and names the missing
   tiles, for an air-gapped machine. Nothing is hosted by the observatory.
+- **A native Windows installer, provisionally.** Windows was unsupported
+  because no plate solver was published for it. ASTAP ended that: it ships
+  command-line builds for `win64`, `win32` and `win11_aarch64`, and all 16
+  runtime dependencies have Windows wheels or are pure Python. `install.ps1`
+  now mirrors `install.sh` — it picks an environment, installs the package,
+  fetches the ASTAP build matching the machine's architecture, and runs
+  `cassa-doctor` — instead of printing WSL instructions and exiting.
+  `install.ps1 -Wsl` still prints those. The packaging declares
+  `Operating System :: Microsoft :: Windows`, and `cassa-doctor` reports the
+  platform as **WARN, not FAIL** — native Windows has not been verified end to
+  end, so failing would assert a problem nobody has observed while passing
+  would assert a guarantee nobody has earned. WSL remains the recommended route
+  until someone confirms it; `docs/WINDOWS-TESTING.md` is the checklist.
+
+  One trap found while building this, worth recording because it is invisible:
+  SourceForge serves a *browser* an HTML "your download will start shortly"
+  page instead of the file, and PowerShell's `Invoke-WebRequest` identifies as
+  a browser by default — so the naive download lands 114 KB of HTML named
+  `astap.zip`. The installer asks with a non-browser user agent (322 KB,
+  beginning `PK`) and verifies the ZIP magic before trusting it.
 - **A complete reference document, `docs/REFERENCE.md`**, and Part VI of the
   observatory manual: every command and flag, every configuration key with its
   default, every environment variable, every FITS keyword read and written,

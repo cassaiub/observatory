@@ -218,7 +218,7 @@ Linux, x86-64            & \cm{./install.sh}        & The reference platform. \\
 Linux, ARM (aarch64)     & \cm{./install.sh -{}-conda} & Works, but only with ASTAP --- nothing else is published for ARM Linux. \\
 macOS, Intel             & \cm{./install.sh}        & Identical to Linux. \\
 macOS, Apple Silicon     & \cm{./install.sh}        & Identical. See the Gatekeeper note below. \\
-Windows                  & WSL, then the Linux route & Do the WSL part first; it needs a reboot. \\
+Windows                  & WSL, then the Linux route & \textbf{Use this for the session.} Do it first; it needs a reboot. \\
 \bottomrule
 \end{tabularx}
 
@@ -226,7 +226,8 @@ Windows                  & WSL, then the Linux route & Do the WSL part first; it
 The pipeline is developed and tested on Linux and macOS, and \cm{install.sh} is
 a shell script. WSL gives you real x86-64 Linux on your Windows machine, so
 every instruction in this handbook then applies unchanged --- and it is the
-route that is actually tested, which is why it is the one documented.
+route that is actually tested, which is why it is the one to use for the
+session.
 
 From an \textbf{administrator} PowerShell:
 
@@ -246,10 +247,13 @@ is reachable. But keep the repository and the work directory in your WSL home
 --- reducing a night across \cm{/mnt} is several times slower.
 \end{caution}
 
-\begin{note}[Running \cm{install.ps1} does nothing]
-It installs nothing on purpose. It prints these WSL steps and stops, so a
-Windows participant is not left with an environment that builds and then cannot
-solve. \cm{cassa-doctor} reports native Windows the same way.
+\begin{note}[There is now a native Windows installer, but not for today]
+\cm{.\textbackslash install.ps1} does build a real native environment: ASTAP
+publishes a Windows plate solver and every dependency has a Windows wheel. It
+has not yet been verified end to end, though, so \cm{cassa-doctor} calls it
+provisional --- and a workshop is the wrong place to be the first person to try
+it. Use WSL today. If you want to test the native route afterwards, the result
+either way is genuinely useful to report.
 \end{note}
 
 \subsection{Step 1 --- Install Miniforge}

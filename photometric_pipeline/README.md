@@ -112,7 +112,8 @@ cd observatory/photometric_pipeline
 ./install.sh
 ```
 
-That is the whole procedure on **Linux and macOS**. `install.sh` picks an
+That is the whole procedure on **Linux and macOS**; on Windows the equivalent is
+`.\install.ps1` (provisional — see below). `install.sh` picks an
 environment (an active conda env, else conda if you have it, else a plain
 `python3 -m venv`), installs every dependency **including a working plate
 solver**, installs the pipeline, and then runs `cassa-doctor` to prove it
@@ -131,7 +132,8 @@ have no conda.
 | **Linux aarch64** (Raspberry Pi, ARM servers) | `./install.sh --conda` | **ASTAP only** — nothing else is published for ARM Linux |
 | **macOS Intel** | `./install.sh` | ASTAP, else `solve-field`, else in-process |
 | **macOS Apple Silicon** | `./install.sh` | ASTAP, else in-process (`solve-field` has no `osx-arm64` build) |
-| **Windows** | WSL, then the Linux route | as Linux x86-64 |
+| **Windows x64 / ARM64** | `.\install.ps1` — **provisional**, see below | **ASTAP only** — it is the one backend published for Windows |
+| **Windows**, the tested route | WSL, then the Linux route | as Linux x86-64 |
 
 ### Step by step, per operating system
 
@@ -176,32 +178,44 @@ Gatekeeper quarantines an unsigned ASTAP binary downloaded from the web. If
 xattr -d com.apple.quarantine "$(command -v astap_cli)"
 ```
 
-**Windows** — through WSL, which is real x86-64 Linux. From an **administrator**
-PowerShell:
+**Windows** — there are two routes, and which you want depends on whether you
+would rather have the simpler install or the tested one.
+
+*Native (provisional).* Everything needed now exists: ASTAP publishes
+command-line builds for win64, win32 and ARM64, and every runtime dependency has
+a Windows wheel. `install.ps1` installs them.
+
+```powershell
+git clone https://github.com/cassaiub/observatory.git
+cd observatory\photometric_pipeline
+.\install.ps1
+cassa-doctor
+```
+
+It has **not yet been verified end to end on a Windows machine**, so
+`cassa-doctor` reports the platform as provisional rather than OK.
+[`docs/WINDOWS-TESTING.md`](docs/WINDOWS-TESTING.md) is a twenty-minute
+checklist that closes that gap — what to run, what to send back, and what is
+most likely to break.
+
+*WSL (tested).* Real x86-64 Linux, and the configuration this project actually
+exercises. From an **administrator** PowerShell:
 
 ```powershell
 wsl --install                    # reboot when prompted
 ```
 
 Then open **Ubuntu** from the Start menu, finish creating your user, and follow
-the Linux instructions above inside that window. Every command is the Linux one,
-and `cassa-doctor` reports native Windows as a failure with this same guidance
-rather than letting a run die later at the solver.
-
-```powershell
-.\install.ps1        # prints the WSL instructions; installs nothing
-```
+the Linux instructions above inside that window. `.\install.ps1 -Wsl` prints
+these steps without installing anything.
 
 Keep the repository and the work directory in your WSL home. Your Windows drives
 are mounted under `/mnt/c`, so data downloaded on the Windows side is reachable,
 but reducing a night across `/mnt` is several times slower.
 
-> **Why WSL and not a native install?** ASTAP does publish a Windows build, so
-> the solver is no longer the obstacle it once was. What is missing is the rest:
-> `install.sh` is a shell script, the test suite and the packaging classifiers
-> target Linux and macOS, and no native Windows configuration has been verified
-> end to end. WSL is the route that is tested, so it is the route that is
-> documented.
+> **Which should you use?** For a workshop or anything with a deadline, WSL — it
+> is the one that has been run. For your own machine, try the native route and
+> tell us how it went.
 
 ### If something is wrong
 
@@ -224,13 +238,16 @@ whichever is present, in the same order.
 
 | Backend | Where it comes from | Available on |
 |---|---|---|
-| **`astap`** | `apt install astap-cli`, else the upstream zip | Linux **x86-64 and aarch64**, macOS **Intel and Apple Silicon** |
+| **`astap`** | `apt install astap-cli`, else the upstream zip | Linux **x86-64 and aarch64**, macOS **Intel and Apple Silicon**, Windows **x64, x86 and ARM64** |
 | `solve-field` | conda-forge `astrometry`, or your system package manager | Linux x86-64, macOS Intel |
 | `astrometry-py` | `pip install "cassa-photometry[solver]"` | Linux x86-64, macOS Intel and Apple Silicon |
 
-ASTAP leads because it is the only backend that exists everywhere this pipeline
-runs — on ARM Linux there is no astrometry.net solver from either channel — and
-because it is an 875 KB binary with no Python dependency. On the CASSA test
+ASTAP leads because it is the **only backend that exists everywhere this
+pipeline runs**, and the gap is not small. conda-forge publishes `astrometry`
+for `linux-64` and `osx-64` only; PyPI's `astrometry` has no aarch64 and no
+Windows wheel. So without ASTAP, an ARM Linux box, and any Windows machine, have
+**no solver at all** — and an Apple Silicon Mac has only the in-process one. It
+is also an 875 KB binary with no Python dependency. On the CASSA test
 frames it solved in **0.11 s** against 41 s for the in-process solver, and it
 recovered the true plate scale from a header that stated it wrongly.
 

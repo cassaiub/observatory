@@ -84,8 +84,11 @@ generation step; everything else works the same, minus the truth comparisons.
    ```
    This brings JupyterLab too, and installs a plate solver: ASTAP first, then
    `solve-field`, then the in-process solver, whichever your platform can run.
-   On Windows, do all of it inside WSL. `workshop/handbook/participant_handbook.pdf`
-   walks through it step by step for all three platforms.
+   On Windows, do all of it inside WSL — that is the tested route and the one to
+   use for the session. (A native `install.ps1` exists and installs a real
+   environment, but is unverified; a workshop is the wrong place to find out.)
+   `workshop/handbook/participant_handbook.pdf` walks through it step by step
+   for all three platforms.
 2. **Star databases / index files** — nothing to do. The pipeline works out what
    this field needs and fetches only that. On a shared machine that already
    holds a full set, point at it instead and nothing is downloaded:
