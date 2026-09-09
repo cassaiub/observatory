@@ -148,6 +148,37 @@ def _maybe_show_plan(config, args):
     raise SystemExit(0)
 
 
+def _add_resource_args(parser):
+    """How much of the machine the run may use.
+
+    Setting any of these also removes the interactive CPU prompt: a stated
+    budget is an answer, and being asked again would make the flag useless in
+    the batch jobs and notebooks where it is most wanted.
+    """
+    group = parser.add_argument_group("resources")
+    group.add_argument("--cores", type=int, default=None, metavar="N",
+                       help="Hard ceiling on cores to use. Default: unset.")
+    group.add_argument("--cpu-fraction", type=float, default=None, metavar="F",
+                       help="Fraction of this machine's cores to use, 0-1 "
+                            "(e.g. 0.5). Default: prompt, or 0.5 when there is "
+                            "no terminal.")
+    group.add_argument("--max-memory-gb", type=float, default=None, metavar="GB",
+                       help="Memory the run should stay inside. Advisory: the "
+                            "estimate is checked against it and a run that will "
+                            "not fit says so before it starts.")
+
+
+def _apply_resource_args(config, args):
+    """Fold the resource flags into the config, overriding any file value."""
+    if getattr(args, "cores", None) is not None:
+        config.phase2.max_cores = args.cores
+    if getattr(args, "cpu_fraction", None) is not None:
+        config.phase2.cpu_fraction = args.cpu_fraction
+    if getattr(args, "max_memory_gb", None) is not None:
+        config.phase2.max_memory_gb = args.max_memory_gb
+    return config
+
+
 def _add_version_arg(parser):
     parser.add_argument("--version", action="version", version=f"cassa-photometry {__version__}")
 
@@ -211,10 +242,11 @@ def integrate():
                         "the RAWDIR header card.")
     p.add_argument("-c", "--config", default=None, help="Optional YAML config file.")
     _add_instrument_arg(p)
+    _add_resource_args(p)
     _add_plan_args(p, ["phase2"])
     args = p.parse_args()
 
-    config = _config_from_args(args)
+    config = _apply_resource_args(_config_from_args(args), args)
     if args.raw_dir:
         config.phase2.raw_dir = args.raw_dir
 
@@ -306,6 +338,7 @@ def run_all():
     p.add_argument("--to", dest="to_phase", type=int, default=3, choices=(1, 2, 3),
                    help="Last phase to run. Default: 3.")
     _add_instrument_arg(p)
+    _add_resource_args(p)
     _add_plan_args(p, ["phase1", "phase2", "phase3"])
     args = p.parse_args()
 
@@ -313,7 +346,7 @@ def run_all():
         raise SystemExit(
             f"error: --from {args.from_phase} is after --to {args.to_phase}.")
 
-    config = _config_from_args(args)
+    config = _apply_resource_args(_config_from_args(args), args)
     logger = get_logger("cassa_run")
 
     from cassa_photometry.paths import phase_dir

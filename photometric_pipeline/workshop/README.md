@@ -84,11 +84,16 @@ generation step; everything else works the same, minus the truth comparisons.
    ```
    This brings JupyterLab too, and installs a plate solver: ASTAP first, then
    `solve-field`, then the in-process solver, whichever your platform can run.
-   On Windows, do all of it inside WSL — that is the tested route and the one to
-   use for the session. (A native `install.ps1` exists and installs a real
-   environment, but is unverified; a workshop is the wrong place to find out.)
+   On Windows run `.\install.ps1` instead — it does the same things, ASTAP and
+   all. WSL also works if you prefer it.
    `workshop/handbook/participant_handbook.pdf` walks through it step by step
    for all three platforms.
+
+   The installer also registers the Jupyter kernel. Check the kernel name in the
+   top-right of every notebook reads **`Python (CASSA photometry)`**; if not,
+   *Kernel → Change Kernel*. A notebook on the wrong kernel reports
+   `ModuleNotFoundError: No module named 'cassa_photometry'`, which looks like a
+   failed install and is not one.
 2. **Star databases / index files** — nothing to do. The pipeline works out what
    this field needs and fetches only that. On a shared machine that already
    holds a full set, point at it instead and nothing is downloaded:
@@ -130,7 +135,7 @@ reduction printed beside it, so you can tell at a glance whether your run agrees
 | `00_setup` | Verify env, package, plate solver, sky-data cache, dataset. |
 | `01_raw_frame_health` | Inventory the raw frames, then health-check them: a go/no-go verdict before anything is reduced. |
 | `02_phase1_calibration` | Run ISR → `calibrated_*.fits`; watch ERR/DQ populate, then audit the bad-pixel mask. |
-| `03_phase2_integration` | Align + stack + WCS-solve → `Master_*.fits`. |
+| `03_phase2_integration` | Align + stack + WCS-solve → `Master_*.fits`. Shows the resource budget first: what the run needs, and what share of your machine that is. |
 | `04_phase3_photometry` | Zero point, aperture correction, classification → catalog CSV + fluxcal; ends by measuring **your own assigned star**. |
 
 **Before running:** every notebook opens with

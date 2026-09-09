@@ -112,8 +112,8 @@ cd observatory/photometric_pipeline
 ./install.sh
 ```
 
-That is the whole procedure on **Linux and macOS**; on Windows the equivalent is
-`.\install.ps1` (provisional — see below). `install.sh` picks an
+That is the whole procedure on **Linux and macOS**; on Windows it is
+`.\install.ps1`, which does the same things. `install.sh` picks an
 environment (an active conda env, else conda if you have it, else a plain
 `python3 -m venv`), installs every dependency **including a working plate
 solver**, installs the pipeline, and then runs `cassa-doctor` to prove it
@@ -132,8 +132,8 @@ have no conda.
 | **Linux aarch64** (Raspberry Pi, ARM servers) | `./install.sh --conda` | **ASTAP only** — nothing else is published for ARM Linux |
 | **macOS Intel** | `./install.sh` | ASTAP, else `solve-field`, else in-process |
 | **macOS Apple Silicon** | `./install.sh` | ASTAP, else in-process (`solve-field` has no `osx-arm64` build) |
-| **Windows x64 / ARM64** | `.\install.ps1` — **provisional**, see below | **ASTAP only** — it is the one backend published for Windows |
-| **Windows**, the tested route | WSL, then the Linux route | as Linux x86-64 |
+| **Windows x64 / ARM64** | `.\install.ps1` | **ASTAP only** — it is the one backend published for Windows |
+| **Windows**, alternatively | WSL, then the Linux route | as Linux x86-64 |
 
 ### Step by step, per operating system
 
@@ -178,12 +178,7 @@ Gatekeeper quarantines an unsigned ASTAP binary downloaded from the web. If
 xattr -d com.apple.quarantine "$(command -v astap_cli)"
 ```
 
-**Windows** — there are two routes, and which you want depends on whether you
-would rather have the simpler install or the tested one.
-
-*Native (provisional).* Everything needed now exists: ASTAP publishes
-command-line builds for win64, win32 and ARM64, and every runtime dependency has
-a Windows wheel. `install.ps1` installs them.
+**Windows**
 
 ```powershell
 git clone https://github.com/cassaiub/observatory.git
@@ -192,30 +187,24 @@ cd observatory\photometric_pipeline
 cassa-doctor
 ```
 
-It has **not yet been verified end to end on a Windows machine**, so
-`cassa-doctor` reports the platform as provisional rather than OK.
-[`docs/WINDOWS-TESTING.md`](docs/WINDOWS-TESTING.md) is a twenty-minute
-checklist that closes that gap — what to run, what to send back, and what is
-most likely to break.
+`install.ps1` mirrors `install.sh`: it picks an environment (an active conda env,
+else conda, else a venv in `.\.venv`), installs the package, fetches the ASTAP
+build matching your architecture, registers the Jupyter kernel, and finishes
+with `cassa-doctor`. Same options in PowerShell form: `-Conda`, `-Venv`,
+`-NewEnv`, `-EnvName`, `-NoDev`, `-NoDoctor`.
 
-*WSL (tested).* Real x86-64 Linux, and the configuration this project actually
-exercises. From an **administrator** PowerShell:
+ASTAP is the only backend Windows has — conda-forge builds `astrometry` for
+`linux-64`/`osx-64` only, and PyPI's `astrometry` ships no Windows wheel — which
+is exactly why the pipeline gained it.
+[`docs/WINDOWS-TESTING.md`](docs/WINDOWS-TESTING.md) records what has been
+verified there and the Windows-specific details worth knowing.
 
-```powershell
-wsl --install                    # reboot when prompted
-```
-
-Then open **Ubuntu** from the Start menu, finish creating your user, and follow
-the Linux instructions above inside that window. `.\install.ps1 -Wsl` prints
-these steps without installing anything.
-
-Keep the repository and the work directory in your WSL home. Your Windows drives
-are mounted under `/mnt/c`, so data downloaded on the Windows side is reachable,
-but reducing a night across `/mnt` is several times slower.
-
-> **Which should you use?** For a workshop or anything with a deadline, WSL — it
-> is the one that has been run. For your own machine, try the native route and
-> tell us how it went.
+*WSL is still there* if you prefer it, or if you need it for other tools. It is
+real x86-64 Linux, so every instruction above applies unchanged inside it, and
+`.\install.ps1 -Wsl` prints the setup steps without installing anything. If you
+go that way, keep the repository and the work directory in your WSL home:
+Windows drives are mounted under `/mnt/c` and reducing a night across `/mnt` is
+several times slower.
 
 ### If something is wrong
 
@@ -229,6 +218,57 @@ tiles are cached, where astrometry index files will come from, whether the
 reference catalogs are reachable, and whether the working directory is writable
 — one line each, with the fix for anything that failed. Paste its output when
 asking for help.
+
+### Choosing how much of the machine to use
+
+Phase 2 is the hungry phase — it holds a whole stack plus its variance planes in
+memory at once. By default it asks on a terminal and takes half the cores when
+there is nobody to ask. Three settings override that, on the command line or in
+a config file:
+
+```bash
+cassa-integrate work/phase1 --cpu-fraction 0.5     # half this machine's cores
+cassa-integrate work/phase1 --cores 4              # a hard ceiling
+cassa-integrate work/phase1 --max-memory-gb 8      # warn before it does not fit
+```
+
+```yaml
+phase2:
+  cpu_fraction: 0.5      # 0-1, fraction of the machine's cores
+  max_cores: 4           # hard ceiling, applied after the fraction
+  max_memory_gb: 8.0     # advisory; the estimate is checked against it
+```
+
+**Setting any of them also switches off the interactive prompt** — a stated
+budget is an answer, and being asked again would make the setting useless in the
+batch jobs and notebooks where it is most wanted.
+
+Every run reports what it intends to take before it starts:
+
+```
+Resource estimate: 34 frames, largest stack 5, peak RAM ~2.2 GB, runtime ~0m 42s.
+Using 32 of 64 cores (50%) and ~2.2 of 184.3 GB RAM (1%).
+```
+
+`max_memory_gb` is advisory — nothing here can cap what numpy allocates — but a
+run that will not fit says so up front rather than being discovered as an OOM
+kill halfway through. In a notebook, `pipe.hw.describe()` prints the same summary
+and `pipe.hw.estimate` is the dictionary behind it.
+
+### Jupyter: the kernel has to be registered
+
+Installing packages sets up an *environment*; it does not make an existing
+Jupyter offer it. `install.sh` and `install.ps1` therefore register the kernel:
+
+```bash
+python -m ipykernel install --user \
+    --name cassa-photometry --display-name "Python (CASSA photometry)"
+```
+
+Check the kernel name in the top-right of every notebook reads **`Python (CASSA
+photometry)`**; if not, *Kernel → Change Kernel*. A notebook on the wrong kernel
+reports `ModuleNotFoundError: No module named 'cassa_photometry'`, which looks
+exactly like a failed install and is not one.
 
 ### About the plate solver
 
@@ -768,6 +808,7 @@ common exposure before combining rather than averaged incoherently.
 | [`docs/REFERENCE.md`](docs/REFERENCE.md) | Every command, flag, config key, environment variable, FITS keyword, catalog column and public function. |
 | [`docs/CUSTOMIZING.md`](docs/CUSTOMIZING.md) | Excluding, reordering and adding steps; describing your setup; changing an algorithm and staying mergeable. |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | What changed, and what it means for existing data. |
+| [`docs/WINDOWS-TESTING.md`](docs/WINDOWS-TESTING.md) | Windows: what is verified, the two platform bugs that first run found, and the details worth knowing. |
 | [Observatory manual](../docs/main.pdf) | The full treatment: the algorithms, the data-flow diagrams, and the other two observatory packages. |
 | [`workshop/`](workshop/) | A lecture, a participant handbook, and five notebooks that reduce a night with known truth. |
 

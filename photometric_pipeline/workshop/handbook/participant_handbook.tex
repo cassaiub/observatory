@@ -218,42 +218,31 @@ Linux, x86-64            & \cm{./install.sh}        & The reference platform. \\
 Linux, ARM (aarch64)     & \cm{./install.sh -{}-conda} & Works, but only with ASTAP --- nothing else is published for ARM Linux. \\
 macOS, Intel             & \cm{./install.sh}        & Identical to Linux. \\
 macOS, Apple Silicon     & \cm{./install.sh}        & Identical. See the Gatekeeper note below. \\
-Windows                  & WSL, then the Linux route & \textbf{Use this for the session.} Do it first; it needs a reboot. \\
+Windows                  & \cm{.\textbackslash install.ps1} & Works natively now. WSL also fine if you already use it. \\
 \bottomrule
 \end{tabularx}
 
-\subsection{Windows only: get to Linux first}
-The pipeline is developed and tested on Linux and macOS, and \cm{install.sh} is
-a shell script. WSL gives you real x86-64 Linux on your Windows machine, so
-every instruction in this handbook then applies unchanged --- and it is the
-route that is actually tested, which is why it is the one to use for the
-session.
-
-From an \textbf{administrator} PowerShell:
+\subsection{Windows}
+Windows installs natively. Get Miniforge (or use a Miniconda you already have),
+then from PowerShell in the cloned repository:
 
 \begin{cmd}
 \begin{cmdtext}
-wsl --install
+.\textbackslash{}install.ps1
+cassa-doctor
 \end{cmdtext}
 \end{cmd}
 
-Reboot when it asks, open \textbf{Ubuntu} from the Start menu, and let it finish
-creating your user account. Everything from here on happens inside that Ubuntu
-window, and every command is the Linux one.
+It does what \cm{install.sh} does on Linux and macOS: builds the environment,
+installs the pipeline, fetches ASTAP --- the one plate solver published for
+Windows --- registers the Jupyter kernel, and checks its own work.
 
-\begin{caution}[Keep your files on the Linux side]
-Your Windows drives appear under \cm{/mnt/c}, so data you downloaded in Windows
-is reachable. But keep the repository and the work directory in your WSL home
---- reducing a night across \cm{/mnt} is several times slower.
-\end{caution}
-
-\begin{note}[There is now a native Windows installer, but not for today]
-\cm{.\textbackslash install.ps1} does build a real native environment: ASTAP
-publishes a Windows plate solver and every dependency has a Windows wheel. It
-has not yet been verified end to end, though, so \cm{cassa-doctor} calls it
-provisional --- and a workshop is the wrong place to be the first person to try
-it. Use WSL today. If you want to test the native route afterwards, the result
-either way is genuinely useful to report.
+\begin{note}[WSL still works, if you prefer it]
+WSL is real x86-64 Linux, so every instruction in this handbook applies
+unchanged inside it. \cm{.\textbackslash install.ps1 -Wsl} prints the setup
+steps. If you go that way, keep the repository and the work directory in your
+WSL home --- your Windows drives appear under \cm{/mnt/c}, and reducing a night
+across \cm{/mnt} is several times slower.
 \end{note}
 
 \subsection{Step 1 --- Install Miniforge}
@@ -322,6 +311,18 @@ which one a run would use, and where the sky data will come from.
 \textbf{Run it before the session, and bring the output if anything is not
 green.} You need to run \cm{conda activate cassa-photometry} in every new
 terminal.
+
+\begin{note}[Check the kernel name before you start]
+The installer registers a Jupyter kernel called \textbf{Python (CASSA
+photometry)}. When a notebook opens, check that name appears in the top-right
+corner; if it does not, use \emph{Kernel $\rightarrow$ Change Kernel}.
+
+This is the single most common way the session goes wrong, and it looks like a
+broken install rather than a wrong kernel: the notebook reports
+\cm{ModuleNotFoundError: No module named 'cassa\_photometry'} on a machine where
+the install clearly succeeded. Installing packages sets up an \emph{environment};
+it does not by itself make Jupyter use it.
+\end{note}
 
 \begin{note}[Which solver you get, and why it does not matter]
 The installer tries three, in order, and the first that installs wins:

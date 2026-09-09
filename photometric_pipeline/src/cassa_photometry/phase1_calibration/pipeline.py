@@ -18,7 +18,7 @@ from astropy.stats import mad_std
 from tqdm import tqdm
 
 from cassa_photometry.config import load_config
-from cassa_photometry.fits_utils import CALVERS, write_mef
+from cassa_photometry.fits_utils import CALVERS, open_fits, write_mef
 from cassa_photometry.instruments import get_profile
 from cassa_photometry.logging_utils import get_logger
 from cassa_photometry.paths import find_raw_frames, raw_tree_summary
@@ -608,7 +608,7 @@ def run(data_dir, output_dir, config=None, logger=None, instrument=None):
     setups = {}
     for f in tqdm(all_files, desc="Scanning headers", unit="file"):
         try:
-            with fits.open(f) as hdul:
+            with open_fits(f) as hdul:
                 header = hdul[0].header
                 # Reducing an already-reduced frame produces a plausible-looking
                 # image with a wrong error budget, and nothing downstream can

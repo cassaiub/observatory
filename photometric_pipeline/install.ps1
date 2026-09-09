@@ -175,6 +175,28 @@ $extras = if ($NoDev) { "" } else { "[dev]" }
 & $py -m pip install -e ".$extras"
 if ($LASTEXITCODE -ne 0) { Die "pip failed to install the package." }
 
+# --- register a Jupyter kernel -----------------------------------------------
+#
+# Installing packages sets up an environment; it does not make Jupyter offer it.
+# Someone who starts JupyterLab from an existing Anaconda, or opens a notebook in
+# VS Code, sees only that Jupyter's kernels -- and the notebooks then fail with
+# `ModuleNotFoundError: No module named 'cassa_photometry'`, which looks exactly
+# like a failed install and is not one.
+Head "Registering the Jupyter kernel"
+& $py -c "import ipykernel" 2>$null
+if ($LASTEXITCODE -eq 0) {
+    & $py -m ipykernel install --user --name cassa-photometry `
+          --display-name "Python (CASSA photometry)" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Item "Kernel 'Python (CASSA photometry)' registered."
+    } else {
+        Warn "Could not register the kernel; the notebooks still run inside this env."
+    }
+} else {
+    Item "ipykernel is not installed; skipping (only needed for the notebooks)."
+    Item "Add it with:  $py -m pip install ipykernel"
+}
+
 # --- make sure there is a plate solver ---------------------------------------
 #
 # On Windows there is exactly one option, and that is why ASTAP exists in this

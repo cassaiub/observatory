@@ -134,7 +134,7 @@ class IntegrationPipeline:
         self.keep_temps = keep_temps
         self.config = config or load_config()
         self.instrument = instrument or get_profile(self.config.instrument, config=self.config)
-        self.hw = HardwareManager(logger=logger)
+        self.hw = HardwareManager(logger=logger, config=self.config)
         # Carried so setup() never has to decide whether prompting is possible.
         self.assume_yes = assume_yes
         self.cpu_level = cpu_level

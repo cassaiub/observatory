@@ -53,6 +53,11 @@ class AstapSolver(Solver):
 
     name = "astap"
 
+    #: ASTAP solves against its own star tiles, fetched by ``astap_db``. It
+    #: never looks at Astrometry.net index files, so nothing should be selected
+    #: or downloaded on its behalf.
+    uses_index_files = False
+
     @classmethod
     def available(cls, config=None):
         return find_binary(
@@ -208,10 +213,12 @@ class AstapSolver(Solver):
         """A FITS WCS header from ASTAP's .ini solution."""
         from astropy.io import fits
 
+        from cassa_photometry.fits_utils import open_fits
+
         wanted = ("CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CDELT1", "CDELT2",
                   "CROTA1", "CROTA2", "CD1_1", "CD1_2", "CD2_1", "CD2_2")
         try:
-            with fits.open(filepath) as hdul:
+            with open_fits(filepath) as hdul:
                 header = hdul[0].header.copy()
         except Exception:
             header = fits.Header()

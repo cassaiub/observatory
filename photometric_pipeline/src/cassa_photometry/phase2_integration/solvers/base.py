@@ -119,6 +119,14 @@ class Solver:
 
     name = "base"
 
+    #: Whether this backend solves against Astrometry.net index files.
+    #:
+    #: ASTAP does not -- it carries its own star database -- so selecting and
+    #: downloading index files for it costs hundreds of megabytes that are then
+    #: handed to a solver which ignores the argument entirely. The caller checks
+    #: this before doing that work.
+    uses_index_files = True
+
     def __init__(self, logger, config):
         self.logger = logger
         self.config = config

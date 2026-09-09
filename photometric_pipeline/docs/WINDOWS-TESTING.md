@@ -1,88 +1,86 @@
-# Verifying the native Windows install
+# Windows: what is verified, and what to check next
 
-Native Windows support is **provisional**: every piece is in place and
-`install.ps1` builds a real environment, but no one has yet run it end to end on
-Windows. This is the checklist that closes that gap. It takes about twenty
-minutes.
+Native Windows is supported. This file records how that happened, what the
+first real run found, and the one thing still worth confirming — so nobody has
+to reconstruct it from commit messages.
 
-Until it is done, `cassa-doctor` reports the platform as a warning rather than
-OK, and the documentation recommends WSL for anything with a deadline.
+## Status
 
-## Why this is worth doing
-
-Windows was unsupported because no plate solver was published for it. That
-stopped being true:
-
-| | Status |
+| | |
 |---|---|
-| Plate solver | ASTAP publishes `win64`, `win32` and `win11_aarch64` command-line builds — each a single `astap_cli.exe` |
-| Runtime dependencies | All 16 have a Windows wheel or are pure Python (checked against PyPI, 2026-09-09) |
-| Pipeline code | No POSIX-only imports, no `fork`, no hardcoded path separators |
+| `install.ps1` on Windows + Miniconda | **Verified** — completes with no errors |
+| Package imports, `cassa-doctor` runs | **Verified** |
+| Phase 1 (calibration) | **Verified** — ran clean |
+| Phase 2 (integration + WCS) | **Fixed, needs a re-run** — see below |
+| Phases 3–4 | Not yet exercised on Windows |
 
-`solve-field` and the in-process solver remain unavailable on Windows —
-conda-forge builds `astrometry` for `linux-64`/`osx-64` only, and PyPI's
-`astrometry` ships no Windows wheel. **ASTAP is the only backend Windows has**,
-which is the whole reason the pipeline gained it.
+## What the first run found
 
-## What to run
+Two defects, both Windows-only, both invisible on Linux and macOS — which is
+exactly why they survived until someone ran the pipeline on Windows.
 
-On a Windows machine, in PowerShell (no admin needed):
+### 1. Phase 2 could not write its own master back
 
-```powershell
-git clone https://github.com/cassaiub/observatory.git
-cd observatory\photometric_pipeline
-.\install.ps1
+```
+PermissionError: [WinError 32] The process cannot access the file because it is
+being used by another process:
+'...\work\phase2\Master_NGC7331_B_Photo_..._5fr.fits'
 ```
 
-Then, in the same window:
+Astropy memory-maps image data by default, and a memory-mapped array keeps the
+file handle alive for as long as the array exists — even after the `HDUList` is
+closed. Phase 2 is precisely the shape that trips this: read a master, solve its
+WCS, write it back over itself. POSIX lets you replace an open file; Windows
+does not.
 
-```powershell
-conda activate cassa-photometry     # or: .\.venv\Scripts\Activate.ps1
-cassa-doctor
-cassa --help
-pytest -q
+Fixed by routing every read in the package through `fits_utils.open_fits()`,
+which turns mapping off, and by making `read_mef` return real copies rather than
+views. `tests/test_windows_file_handles.py` pins the property on every platform,
+because the symptom only appears on the one that is least likely to be in CI.
+
+### 2. Index files were downloaded for a backend that never reads them
+
+```
+-> Solving with 8 index file(s); SolveHints(...)
+-> ASTAP database: 10 tile(s) already cached.
 ```
 
-If you have a night of frames handy, the real test is a reduction:
+Both lines for one solve, and only the second mattered. Phase 2 selected and
+fetched Astrometry.net index files on every solve regardless of backend — about
+246 MB per field handed to ASTAP, which ignores the argument entirely, on top of
+the ~6 MB of star tiles it actually uses.
+
+Fixed with a `uses_index_files` flag on the solver classes; ASTAP sets it
+`False`. It also stops the "WCS solving will fail; run cassa-index-fetch"
+warning, which was wrong and expensive advice for an ASTAP user.
+`tests/test_solver_index_use.py` covers it.
+
+## What to check next
+
+A phase 2 re-run on Windows, to confirm the `PermissionError` is gone:
 
 ```powershell
-cassa-simulate --preset tiny --out sim
-cassa-run -i sim\raw -o sim\work
+conda activate cassa-photometry
+cassa-run -i raw -o work --to 2
 ```
 
-## What to send back
+Then, if that passes, phases 3 and 4:
 
-The output of `cassa-doctor` is the single most useful thing — it names the
-platform, the versions, which backend is in use, and the cache state in one
-screen. Beyond that:
+```powershell
+cassa-photometry work\phase2
+cassa-diagnose work\phase2 --raw raw
+```
 
-1. Whether `install.ps1` completed, and what it printed if it did not.
-2. Whether `solver: astap` shows a path, and whether `solver: in use` says
-   `astap`.
-3. The `pytest -q` summary line.
-4. If you ran a reduction: whether phase 2 wrote a WCS (`WCSSOLVR` and `ASTRMS`
-   in a `Master_*.fits` header) and whether phase 3 produced a zero point.
+Useful to send back: the `cassa-doctor` output, whether a `Master_*.fits`
+carries `WCSSOLVR` and `ASTRMS`, and whether phase 3 produced a zero point
+(`MAGZERO`).
 
-## Things most likely to break, and what they look like
+## Windows-specific notes
 
-| Symptom | Cause |
+| Thing | Detail |
 |---|---|
-| `astap.zip` is ~114 KB and `Expand-Archive` fails | SourceForge served the HTML interstitial. The installer sets a non-browser User-Agent to avoid this and checks the ZIP magic bytes, so it should refuse rather than proceed — if it *did* proceed, that is a bug worth reporting. |
-| `solver: astap  not on PATH` after a successful install | The binary landed in `%LOCALAPPDATA%\cassa-photometry\bin` because the environment directory was not writable. Set `phase2.astap_path` to it, or add it to PATH. |
-| `conda env create` fails | Usually a proxy or a long-path limit. `.\install.ps1 -Venv` avoids conda entirely; every dependency has a wheel. |
-| A path-related error inside a phase | This is the interesting one — it would be a genuine portability bug, not an environment problem. Please send the traceback. |
-
-## When it passes
-
-Three things change, and they should change together:
-
-1. `doctor.check_platform()` — Windows moves from `WARN` to `OK`, and the
-   "provisional" wording goes.
-2. `tests/test_platform_support.py` — `test_native_windows_is_provisional_not_a_failure`
-   becomes an `OK` assertion.
-3. The docs — the README, the manual's Part II, the participant handbook and
-   `install.ps1`'s own header stop calling it provisional, and WSL becomes one
-   supported route among several rather than the recommended one.
-
-Delete this file at that point, or replace it with a line recording the date and
-the Windows version it was verified on.
+| Plate solver | **ASTAP only.** conda-forge builds `astrometry` for `linux-64`/`osx-64`; PyPI's `astrometry` ships no Windows wheel. This is why the pipeline gained ASTAP. |
+| ASTAP download | SourceForge serves a *browser* an HTML "your download will start shortly" page instead of the file, and `Invoke-WebRequest` identifies as a browser by default — 114 KB of HTML named `astap.zip`. The installer asks with a non-browser user agent and verifies the ZIP magic bytes before trusting the result. |
+| Binary location | `astap_cli.exe` goes into the environment's directory, or `%LOCALAPPDATA%\cassa-photometry\bin` if that is not writable. If `cassa-doctor` cannot find it, set `phase2.astap_path`. |
+| Long paths | `conda env create` can fail on the 260-character limit. `.\install.ps1 -Venv` avoids conda entirely — every dependency has a Windows wheel. |
+| Where to work | Anywhere. If you use WSL instead, keep the repository in your WSL home; reducing across `/mnt/c` is several times slower. |

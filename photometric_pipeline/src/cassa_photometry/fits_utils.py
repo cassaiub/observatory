@@ -13,6 +13,30 @@ DRAGONS, LCO BANZAI):
 import numpy as np
 from astropy.io import fits
 
+
+def open_fits(path, **kwargs):
+    """``fits.open`` with memory mapping off.
+
+    Astropy memory-maps image data by default, and a memory-mapped array keeps
+    the underlying file handle alive for as long as the array exists -- even
+    after the ``HDUList`` has been closed. On Windows that makes the very next
+    write to the same path fail with::
+
+        PermissionError: [WinError 32] The process cannot access the file
+        because it is being used by another process
+
+    which is precisely the shape of phase 2: read a master stack, solve its
+    WCS, write it back. POSIX permits the overwrite, so the bug is invisible on
+    Linux and macOS and shows up only on a Windows machine.
+
+    The pipeline reads whole frames and works on them in memory regardless, so
+    mapping buys nothing here. Every read in the package goes through this
+    function so the policy is one line rather than a convention to remember.
+    """
+    kwargs.setdefault("memmap", False)
+    return fits.open(path, **kwargs)
+
+
 # --- Data-quality bit flags ---------------------------------------------------
 DQ_GOOD = 0
 DQ_SATURATED = 1      # pixel at/above the saturation level
@@ -110,13 +134,16 @@ def read_mef(path):
     Tolerant of legacy single-HDU files: ``err`` and ``dq`` come back ``None``
     when the extensions are absent so downstream code can fall back gracefully.
     """
-    with fits.open(path) as hdul:
+    with open_fits(path) as hdul:
         sci = hdul[0].data
         header = hdul[0].header
         err = hdul[ERR_EXTNAME].data if ERR_EXTNAME in hdul else None
         dq = hdul[DQ_EXTNAME].data if DQ_EXTNAME in hdul else None
-        # Realise the arrays before the file closes.
-        sci = None if sci is None else np.asarray(sci, dtype=np.float32)
-        err = None if err is None else np.asarray(err, dtype=np.float32)
-        dq = None if dq is None else np.asarray(dq, dtype=np.int32)
+        # Realise the arrays before the file closes. np.array rather than
+        # np.asarray: asarray on an array that already has the requested dtype
+        # returns the *same object*, so the caller would keep whatever the read
+        # was backed by. A copy is what makes the file closable.
+        sci = None if sci is None else np.array(sci, dtype=np.float32)
+        err = None if err is None else np.array(err, dtype=np.float32)
+        dq = None if dq is None else np.array(dq, dtype=np.int32)
     return sci, err, dq, header

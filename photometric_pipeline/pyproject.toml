@@ -56,6 +56,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "pytest-cov", "ruff"]
+# The workshop notebooks. `ipykernel` is the part people miss: installing
+# packages sets up an environment, it does not make an existing Jupyter offer
+# it in the kernel list. install.sh and install.ps1 register the kernel.
+notebook = ["jupyterlab", "ipykernel"]
 # The in-process plate solver, for machines with no `solve-field` binary.
 #
 # NOTE: conda-forge's `astrometry` package (the astrometry.net suite, which is

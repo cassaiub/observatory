@@ -11,6 +11,7 @@ import os
 from astropy.io import fits
 
 from cassa_photometry.config import load_config
+from cassa_photometry.fits_utils import open_fits
 from cassa_photometry.instruments import get_profile
 from cassa_photometry.logging_utils import get_logger
 from cassa_photometry.paths import sibling_phase_dir
@@ -57,7 +58,7 @@ def detect_band(file_path, default="R", instrument=None, config=None):
         getattr(config, "instrument", None), config=config
     )
     try:
-        with fits.open(file_path) as hdul:
+        with open_fits(file_path) as hdul:
             band = instrument.science_band(hdul[0].header, default=default)
         if band is None:
             return UNCALIBRATED
@@ -199,7 +200,6 @@ def _reduce_one(engine, path, base, band, calibratable, out_dir, config, logger)
 
 def _resolve_target(path, registry):
     """The target a master frame describes."""
-    from astropy.io import fits
 
     try:
         return registry.resolve(fits.getheader(path))

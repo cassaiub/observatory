@@ -8,10 +8,10 @@ saturation mask so saturated pixels can be flagged in the DQ plane later.
 
 import astropy.units as u
 import numpy as np
-from astropy.io import fits
 from astropy.nddata import CCDData, StdDevUncertainty
 
 from cassa_photometry.config import load_config
+from cassa_photometry.fits_utils import open_fits
 from cassa_photometry.logging_utils import get_logger
 
 # Missing detector constants are a property of the dataset, not of one frame, so
@@ -86,7 +86,7 @@ def load_standardized_ccds(filepath, instrument, config=None, add_uncertainty=Tr
         config = load_config()
 
     standardized_list = []
-    with fits.open(filepath) as hdul:
+    with open_fits(filepath) as hdul:
         global_header = hdul[0].header
         amplifiers = instrument.get_amplifiers(hdul)
 

@@ -328,6 +328,26 @@ class Phase2Config:
     # raws have since moved, or for frames calibrated before RAWDIR existed.
     raw_dir: str | None = None
 
+    # --- Resource budget ------------------------------------------------------
+    # How much of the machine this phase may use. All three are None by default,
+    # which keeps the existing behaviour: ask on a terminal, take 50% otherwise.
+    #
+    # Setting any of them removes the prompt, because a configured budget is an
+    # answer -- being asked again would be the surprising thing. On a shared
+    # machine or an HPC node this is the difference between a reduction that
+    # co-exists with other work and one that does not.
+    #
+    # Fraction of the machine's cores to use, 0 < f <= 1.
+    cpu_fraction: float | None = None
+    # A hard ceiling in cores, applied after the fraction. Use this when the
+    # limit is a share of a shared box rather than a share of the hardware.
+    max_cores: int | None = None
+    # Memory the run should stay inside, in GB. Advisory: it is not enforced --
+    # nothing here can cap what numpy allocates -- but the estimate is checked
+    # against it and a run that will not fit says so up front rather than
+    # discovering it by being killed part-way through.
+    max_memory_gb: float | None = None
+
 
 @dataclass
 class Phase3Config:

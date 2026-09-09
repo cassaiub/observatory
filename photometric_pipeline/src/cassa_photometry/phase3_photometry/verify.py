@@ -19,6 +19,7 @@ from astroquery.sdss import SDSS
 from astroquery.vizier import Vizier
 
 from cassa_photometry.config import load_config
+from cassa_photometry.fits_utils import open_fits
 from cassa_photometry.instruments import get_profile
 from cassa_photometry.phase3_photometry import catalogs
 
@@ -107,7 +108,7 @@ def detect_filter(csv_path, default_filter, instrument=None, config=None):
     )
     for pf in companion_fits(csv_path):
         try:
-            with fits.open(pf) as hdul:
+            with open_fits(pf) as hdul:
                 header = hdul[0].header
                 raw = instrument.get_filter(header)
                 if not raw or raw in ("UNKNOWN", "NONE"):

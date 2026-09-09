@@ -20,6 +20,33 @@ instrument layer built around the CASSA 8-inch.
 
 ### Added
 
+- **Native Windows, verified.** The provisional label is gone: `install.ps1`
+  was run on Windows with Miniconda and completed with no errors, the package
+  imports, and phase 1 reduces. `cassa-doctor` now reports Windows as `OK`.
+  Two Windows-only defects surfaced in that first run and are fixed (see Fixed
+  below); both were invisible on POSIX, which is why they survived until
+  someone ran the pipeline on Windows. `docs/WINDOWS-TESTING.md` records what
+  is verified, what to check next, and the Windows-specific details.
+- **A resource budget for phase 2**, the memory-hungry phase. Three new
+  settings — `phase2.cpu_fraction`, `phase2.max_cores`, `phase2.max_memory_gb`,
+  with matching `--cpu-fraction`, `--cores` and `--max-memory-gb` flags on
+  `cassa-integrate` and `cassa-run`. **Setting any of them also suppresses the
+  interactive CPU prompt**, because a stated budget is an answer and being
+  asked again would make the setting useless in a batch job or a notebook.
+  `max_memory_gb` is advisory — nothing can cap what NumPy allocates — but the
+  estimate is checked against it, so a run that will not fit says so before it
+  starts rather than being discovered as an OOM kill part-way through. Every
+  run now logs what share of the machine it intends to take, and
+  `HardwareManager.estimate_resources()` / `.describe()` expose the same
+  numbers, which the phase 2 workshop notebook shows before committing to a
+  run.
+- **Both installers register the Jupyter kernel** (`Python (CASSA
+  photometry)`), and `ipykernel` is in `environment.yml` and a new `notebook`
+  extra. Installing packages sets up an environment; it does not make an
+  existing Jupyter offer it — and the resulting `ModuleNotFoundError: No module
+  named 'cassa_photometry'` looks exactly like a failed install and is not one.
+
+
 - **ASTAP as a third plate-solving backend, and the one the installer prefers.**
   `install.sh` now tries **ASTAP → `solve-field` → in-process** and uses the
   first that installs; `phase2.solver: auto` prefers them in the same order.
@@ -328,6 +355,26 @@ work:
   from a single star.
 
 ### Fixed
+
+- **[Windows] Phase 2 could not write its own master back.** Astropy
+  memory-maps image data by default, and a memory-mapped array keeps the file
+  handle alive for as long as the array exists — even after the `HDUList` is
+  closed. Phase 2 is exactly that shape: read a master, solve its WCS, write it
+  back over itself. POSIX permits replacing an open file, so this was invisible
+  on Linux and macOS; on Windows it was
+  `PermissionError: [WinError 32] The process cannot access the file because it
+  is being used by another process`. Every read in the package now goes through
+  `fits_utils.open_fits()`, which turns mapping off, and `read_mef` returns real
+  copies rather than views. Pinned on all platforms by
+  `tests/test_windows_file_handles.py`, since the symptom only appears on the
+  platform least likely to be in CI.
+- **Index files were downloaded for backends that never read them.** Phase 2
+  selected and fetched Astrometry.net index files on every solve regardless of
+  backend — roughly 246 MB per field handed to ASTAP, which ignores the argument
+  entirely, on top of the ~6 MB of star tiles it actually uses. Solvers now
+  declare `uses_index_files`; ASTAP sets it `False`. This also silences the
+  "WCS solving will fail; run cassa-index-fetch" warning, which was wrong and
+  expensive advice for an ASTAP user.
 
 - **The in-process solver was completely broken, and so was its residual.** Two
   pre-existing bugs, both found while wiring up ASTAP, both fixed:

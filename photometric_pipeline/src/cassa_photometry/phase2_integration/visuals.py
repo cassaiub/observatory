@@ -10,6 +10,7 @@ from astropy.visualization import ZScaleInterval
 from matplotlib.backends.backend_pdf import PdfPages
 
 from cassa_photometry.config import load_config
+from cassa_photometry.fits_utils import open_fits
 from cassa_photometry.paths import find_raw_frames
 from cassa_photometry.phase2_integration.math_utils import MathEngine
 
@@ -108,7 +109,7 @@ class VisualQAGenerator:
 
                 # fits.getdata returns the primary (SCI) plane of the MEF files.
                 m_data = fits.getdata(group.master_filepath).astype(np.float32)
-                with fits.open(group.anchor_filepath) as hdul:
+                with open_fits(group.anchor_filepath) as hdul:
                     a_calibrated_raw = np.asarray(hdul[0].data, dtype=np.float32)
                     anchor_header = hdul[0].header.copy()
                 calibrated_filename = os.path.basename(group.anchor_filepath)

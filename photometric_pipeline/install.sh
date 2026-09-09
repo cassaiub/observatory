@@ -104,6 +104,25 @@ esac
 say "Installing cassa-photometry (editable)"
 "$PY" -m pip install -e ".${EXTRAS}"
 
+# --- register a Jupyter kernel -----------------------------------------------
+#
+# Installing packages sets up an environment; it does not make Jupyter offer it.
+# A participant who starts JupyterLab from anywhere else -- an existing Anaconda,
+# a system install, VS Code -- sees only that Jupyter's own kernels, and the
+# notebooks then fail with `ModuleNotFoundError: No module named
+# 'cassa_photometry'`, which looks exactly like a failed install and is not one.
+say "Registering the Jupyter kernel"
+if "$PY" -c "import ipykernel" >/dev/null 2>&1; then
+    "$PY" -m ipykernel install --user \
+        --name cassa-photometry \
+        --display-name "Python (CASSA photometry)" >/dev/null 2>&1 \
+        && echo "    Kernel 'Python (CASSA photometry)' registered." \
+        || warn "Could not register the kernel; the notebooks still run inside this env."
+else
+    echo "    ipykernel is not installed; skipping (only needed for the notebooks)."
+    echo "    Add it with:  $PY -m pip install ipykernel"
+fi
+
 # --- make sure there is a plate solver ---------------------------------------
 #
 # Phase 2 needs a plate solver, and three backends can provide one. They are

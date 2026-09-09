@@ -39,8 +39,12 @@ dependencies:
   - pyyaml
   - requests
   # --- notebooks ------------------------------------------------------------
-  # The pipeline does not need Jupyter; the workshop does.
+  # The pipeline does not need Jupyter; the workshop does. ipykernel is what
+  # lets this environment appear in the kernel list of a JupyterLab started
+  # from anywhere else -- installing packages sets up an environment, it does
+  # not by itself make Jupyter offer it. install.sh registers the kernel.
   - jupyterlab
+  - ipykernel
   # --- development ----------------------------------------------------------
   - pytest>=7
   - pytest-cov

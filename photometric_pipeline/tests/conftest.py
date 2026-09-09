@@ -7,6 +7,8 @@ which coupled a dozen phase-1 tests to a setup the observatory does not operate.
 A purpose-built fixture says what it is.
 """
 
+import sys
+
 import numpy as np
 import pytest
 from astropy.io import fits
@@ -64,26 +66,58 @@ def write_raw(path, data, **cards):
 
 
 @pytest.fixture
-def pipeline_logs(caplog):
-    """Make ``caplog`` see the pipeline's own loggers.
+def pipeline_logs(caplog, monkeypatch):
+    """Make ``caplog`` see the pipeline's own loggers, whatever they are named.
 
     ``get_logger`` sets ``propagate = False`` so phase output is not duplicated
     through the root logger, and it re-applies that on every call. caplog
     attaches at the root, so it would otherwise capture nothing and a test
-    asserting on a warning would pass no matter what was logged. Attaching
-    caplog's own handler to each pipeline logger sidesteps propagation entirely.
+    asserting on a warning would pass no matter what was logged.
+
+    This used to attach to a hard-coded list of logger names, which silently did
+    nothing for any other name -- a test using ``get_logger("test")`` asserted
+    against an empty string and passed or failed depending on what else had run
+    first. Wrapping ``get_logger`` instead covers every name by construction,
+    including ones a future phase invents.
     """
     import logging
 
-    names = ["cassa_photometry", "cassa_calibrate", "cassa_integrate",
-             "cassa_diagnose", "cassa_run"]
-    loggers = [logging.getLogger(n) for n in names]
-    for logger in loggers:
-        logger.addHandler(caplog.handler)
-        logger.setLevel(logging.DEBUG)
+    from cassa_photometry import logging_utils
+
     caplog.set_level(logging.DEBUG)
+    attached = []
+
+    real_get_logger = logging_utils.get_logger
+
+    def capturing_get_logger(*args, **kwargs):
+        logger = real_get_logger(*args, **kwargs)
+        if caplog.handler not in logger.handlers:
+            logger.addHandler(caplog.handler)
+            attached.append(logger)
+        logger.setLevel(logging.DEBUG)
+        return logger
+
+    # Patch at the definition site and at every module that imported the name
+    # directly, since `from ... import get_logger` binds a separate reference
+    # that patching the source module does not reach. Test modules do this too,
+    # so the sweep covers everything currently imported rather than just the
+    # package -- only rebinding attributes that are the real function.
+    monkeypatch.setattr(logging_utils, "get_logger", capturing_get_logger)
+    for module in list(sys.modules.values()):
+        if getattr(module, "get_logger", None) is real_get_logger:
+            monkeypatch.setattr(module, "get_logger", capturing_get_logger)
+
+    # Loggers that already exist, for code holding a reference from before.
+    for name in ("cassa_photometry", "cassa_calibrate", "cassa_integrate",
+                 "cassa_diagnose", "cassa_run"):
+        logger = logging.getLogger(name)
+        if caplog.handler not in logger.handlers:
+            logger.addHandler(caplog.handler)
+            attached.append(logger)
+        logger.setLevel(logging.DEBUG)
+
     try:
         yield caplog
     finally:
-        for logger in loggers:
+        for logger in attached:
             logger.removeHandler(caplog.handler)

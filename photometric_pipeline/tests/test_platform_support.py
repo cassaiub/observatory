@@ -1,20 +1,18 @@
-"""Supported platforms: Linux and macOS verified, Windows provisional.
+"""Supported platforms: Linux, macOS and Windows.
 
-The stance changed once already, so these tests pin it in the places a user
+The stance has changed twice, so these tests pin it in the places a user
 actually looks -- the doctor, the packaging metadata, the installer -- rather
 than only in prose that can drift.
 
-Windows was originally a hard failure because no plate solver was published for
-it. ASTAP changed that: it ships command-line builds for win64, win32 and ARM64,
-and every runtime dependency has a Windows wheel, so ``install.ps1`` can and
-does install a working environment. What is still missing is evidence that it
-works end to end, so the doctor reports ``WARN`` -- "this may work and nobody
-has checked" -- rather than ``OK`` or ``FAIL``. Both of those would be a claim
-the project cannot currently make.
+Windows was a hard failure for as long as no plate solver was published for it.
+ASTAP ended that, and a native install has since been run on Windows: the
+environment builds, the package imports, phase 1 reduces. Two Windows-only
+defects surfaced in that run and are fixed -- see ``test_windows_file_handles``
+and ``test_solver_index_use`` -- both invisible on POSIX, which is why they
+lasted.
 
-WSL is real x86-64 Linux, so it is not a separate target: everything here
-applies unchanged inside it, and it stays the recommended route until a native
-install is confirmed.
+WSL remains a good route, and it is real x86-64 Linux so everything here applies
+unchanged inside it. It is simply no longer the only one.
 """
 
 import re
@@ -30,34 +28,14 @@ REPO = Path(__file__).resolve().parents[1]
 
 # --- cassa-doctor states the position, before a run could hit it --------------
 
-def test_native_windows_is_provisional_not_a_failure():
-    """WARN, not FAIL: the solver blocker is gone, so refusing outright would
-    be wrong -- but nothing has verified it, so passing silently would be too."""
-    with mock.patch("platform.system", return_value="Windows"), \
-         mock.patch("platform.machine", return_value="AMD64"):
-        check = doctor.check_platform()
-
-    assert check.status == doctor.WARN
-    assert "provisional" in check.detail.lower()
-    # It must name both routes: the one to try, and the one known to work.
-    assert "install.ps1" in check.fix
-    assert "WSL" in check.fix
-
-
-def test_windows_does_not_make_the_doctor_exit_non_zero():
-    """`cassa-doctor` exits on FAIL only. A Windows user with a working install
-    must not be told their machine failed a check it did not fail."""
-    with mock.patch("platform.system", return_value="Windows"), \
-         mock.patch("platform.machine", return_value="AMD64"):
-        assert doctor.check_platform().status != doctor.FAIL
-
-
 @pytest.mark.parametrize(("system", "machine"), [
+    ("Windows", "AMD64"),
+    ("Windows", "ARM64"),
     ("Linux", "x86_64"),
     ("Linux", "aarch64"),
     ("Darwin", "arm64"),
 ])
-def test_verified_platforms_pass(system, machine):
+def test_every_supported_platform_passes(system, machine):
     with mock.patch("platform.system", return_value=system), \
          mock.patch("platform.machine", return_value=machine):
         assert doctor.check_platform().status == doctor.OK
@@ -72,8 +50,15 @@ def test_the_platform_check_runs_as_part_of_the_doctor():
 def test_windows_solver_advice_does_not_point_at_apt():
     """The Linux fixes are actively misleading on Windows: `solve-field` is not
     published for it at all, so "not on PATH" would invite a hunt for something
-    that does not exist."""
-    with mock.patch("platform.system", return_value="Windows"):
+    that does not exist.
+
+    ASTAP's absence is pinned rather than inherited from the machine: on a
+    developer box that has ASTAP the check is ``OK`` with no fix at all, and the
+    assertion below would be testing nothing.
+    """
+    with mock.patch("platform.system", return_value="Windows"), \
+         mock.patch("cassa_photometry.phase2_integration.solvers.astap.find_binary",
+                    return_value=None):
         checks = {c.name: c for c in doctor.check_solvers()}
 
     assert "not published for Windows" in checks["solver: solve-field"].detail
@@ -135,7 +120,12 @@ def test_the_astap_download_is_verified_before_it_is_trusted():
     )
 
 
-def test_the_installer_does_not_claim_windows_is_verified():
-    """Listing Windows is honest; calling it tested is not, until it is."""
-    script = (REPO / "install.ps1").read_text()
-    assert "PROVISIONAL" in script or "provisional" in script
+def test_the_installer_registers_a_jupyter_kernel():
+    """Installing packages sets up an environment; it does not make an existing
+    Jupyter offer it. Without this the workshop notebooks fail with
+    `ModuleNotFoundError: No module named 'cassa_photometry'`, which looks
+    exactly like a failed install and is not one."""
+    for script in ("install.sh", "install.ps1"):
+        text = (REPO / script).read_text()
+        assert "ipykernel install" in text, f"{script} never registers a kernel"
+        assert "CASSA photometry" in text, f"{script} sets no kernel display name"

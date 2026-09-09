@@ -49,35 +49,23 @@ def _version_of(module_name):
 
 
 def check_platform():
-    """Linux and macOS are verified; native Windows is provisional.
+    """Linux, macOS and Windows are all supported.
 
-    Windows used to be reported as a hard failure, on the grounds that no plate
-    solver was published for it. That is no longer true: ASTAP ships
-    command-line builds for win64, win32 and ARM64, and every runtime
-    dependency has a Windows wheel. So the pieces are all present, and
-    ``install.ps1`` now installs them.
+    Windows was reported as a hard failure for as long as no plate solver was
+    published for it. ASTAP ended that, and a native install has since been
+    run: the environment builds, the package imports, and phase 1 reduces.
 
-    What is still missing is evidence. No native Windows install has been
-    verified end to end, so this reports ``WARN`` rather than ``OK`` -- enough
-    to say "this may work and nobody has checked", without the exit status
-    claiming a failure that may not exist. WSL remains the route the project
-    tests, and it is real x86-64 Linux, so every instruction applies unchanged
-    inside it.
+    Two Windows-only defects surfaced in that first run and are fixed -- a
+    memory-mapped array kept a master stack open so phase 2 could not write it
+    back (``PermissionError: [WinError 32]``), and index files were being
+    fetched for a backend that never reads them. Both were invisible on POSIX,
+    which is why they lasted: the first because POSIX allows replacing an open
+    file, the second because it only wasted bandwidth.
 
-    When a Windows install has been confirmed, this becomes ``OK`` and the
-    wording goes with it.
+    WSL remains a perfectly good route -- it is real x86-64 Linux, so every
+    instruction applies unchanged inside it -- but it is no longer the only one.
     """
-    system = platform.system()
-    detail = f"{system} {platform.machine()}"
-    if system == "Windows":
-        return Check(
-            "platform", WARN,
-            f"{detail} (native Windows support is provisional -- not yet verified)",
-            "It should work: run `.\\install.ps1`. If anything fails, "
-            "`.\\install.ps1 -Wsl` prints the tested WSL route. Either way, "
-            "please report what this command printed.",
-        )
-    return Check("platform", OK, detail)
+    return Check("platform", OK, f"{platform.system()} {platform.machine()}")
 
 
 def check_python():

@@ -5,9 +5,8 @@ back in the same multi-extension form.
 """
 
 import numpy as np
-from astropy.io import fits
 
-from cassa_photometry.fits_utils import CALVERS, read_mef, write_mef
+from cassa_photometry.fits_utils import CALVERS, open_fits, read_mef, write_mef
 from cassa_photometry.instruments import get_profile
 
 
@@ -29,7 +28,7 @@ class FITSHandler:
             getattr(config, "instrument", None), config=config
         )
         try:
-            with fits.open(filepath) as hdul:
+            with open_fits(filepath) as hdul:
                 header = hdul[0].header
                 meta = {}
                 meta["object"] = header.get("OBJECT", header.get("TARGET", "Unknown")).replace(" ", "").upper()
@@ -71,7 +70,7 @@ class FITSHandler:
     @staticmethod
     def save_master(sci, err, dq, ref_filepath, output_filename, num_frames, meta):
         """Write the stacked master as a SCI/ERR/DQ multi-extension FITS file."""
-        with fits.open(ref_filepath) as hdul:
+        with open_fits(ref_filepath) as hdul:
             header = hdul[0].header.copy()
 
         pixel_scale = 0.0

@@ -25,12 +25,11 @@ resampling happens, so the planes stay aligned.
 import os
 
 import numpy as np
-from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 
 from cassa_photometry.astrometry_index import IndexManifest, build_store, required_indexes
 from cassa_photometry.config import load_config
-from cassa_photometry.fits_utils import read_mef, write_mef
+from cassa_photometry.fits_utils import open_fits, read_mef, write_mef
 from cassa_photometry.instruments import get_profile
 from cassa_photometry.phase2_integration.solvers import (
     SolveFieldSolver,
@@ -63,12 +62,21 @@ class WCSSolver:
 
         if self.solver is not None:
             self.logger.info("Plate solver: %s", self.solver.name)
-        if not len(self.manifest) and not os.path.isdir(self.index_dir):
+        # Only warn about index files when the chosen backend actually reads
+        # them. ASTAP carries its own star database, and telling an ASTAP user
+        # that "WCS solving will fail" because a directory they do not need is
+        # absent sends them off to download several gigabytes for nothing.
+        if (self._needs_index_files()
+                and not len(self.manifest) and not os.path.isdir(self.index_dir)):
             self.logger.warning(
                 "No astrometry index manifest and no local index directory (%s). "
                 "WCS solving will fail; run cassa-index-fetch or set "
                 "CASSA_ASTROMETRY_INDEX.", self.index_dir,
             )
+
+    def _needs_index_files(self):
+        """Whether the active backend solves against Astrometry.net indexes."""
+        return getattr(self.solver, "uses_index_files", True)
 
     # --- Public ---------------------------------------------------------------
     def solve(self, group, is_rescue=False, keep_temps=False):
@@ -79,16 +87,19 @@ class WCSSolver:
             return False
 
         _, err, dq, _ = read_mef(filepath)
-        with fits.open(filepath) as hdul:
+        with open_fits(filepath) as hdul:
             header = hdul[0].header.copy()
             data = hdul[0].data
 
         hints = self._hints(header, data, is_rescue)
         index_paths = self._indexes_for(hints, self.config.phase2.index_scale_lo_frac)
-        self.logger.info(
-            "    -> Solving with %d index file(s); %s",
-            len(index_paths), hints,
-        )
+        if self._needs_index_files():
+            self.logger.info(
+                "    -> Solving with %d index file(s); %s",
+                len(index_paths), hints,
+            )
+        else:
+            self.logger.info("    -> Solving; %s", hints)
 
         result = self.solver.solve(filepath, hints, index_paths)
 
@@ -142,7 +153,14 @@ class WCSSolver:
         the iTelescope headers claim 0.4"/px where the truth is 0.591, which
         makes a 10' field look like 6.8' and excludes precisely the indexes that
         do solve it.
+
+        Backends that carry their own star database get nothing: selecting for
+        ASTAP downloaded ~246 MB of index files per field that were then handed
+        to a solver which ignores the argument, on top of the ~6 MB of tiles it
+        actually uses.
         """
+        if not self._needs_index_files():
+            return []
         entries = required_indexes(
             hints.ra_deg, hints.dec_deg, hints.pixel_scale,
             hints.naxis1, hints.naxis2, manifest=self.manifest,
@@ -201,7 +219,7 @@ class WCSSolver:
         self._check_scale(header, original_header)
         header["WCSSOLVR"] = (result.backend, "Plate-solving backend")
 
-        with fits.open(filepath) as hdul:
+        with open_fits(filepath) as hdul:
             solved_data = hdul[0].data
         write_mef(filepath, sci=solved_data, err=err, dq=dq, header=header,
                   history=f"PHASE 2: WCS solved via {result.backend}")

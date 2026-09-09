@@ -26,6 +26,7 @@ import tempfile
 import numpy as np
 from astropy.io import fits
 
+from cassa_photometry.fits_utils import open_fits
 from cassa_photometry.phase2_integration.solvers.base import Solver, SolveResult
 
 #: Scratch files solve-field leaves beside the frame.
@@ -72,7 +73,7 @@ class SolveFieldSolver(Solver):
                     message=_last_lines(completed.stdout, completed.stderr),
                 )
 
-            with fits.open(output_fits) as hdul:
+            with open_fits(output_fits) as hdul:
                 header = hdul[0].header.copy()
             os.remove(output_fits)
             return SolveResult(True, header=header, matched=self._corr(base),

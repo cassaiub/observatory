@@ -56,6 +56,18 @@ Ten console entry points. `cassa <command>` is an umbrella for all of them, so
 | `--only STEP` | Run **only** these steps, skipping every other one in the phase. Repeatable. |
 | `--show-plan` | Print the resolved step order and exit, reducing nothing. |
 
+### Resource options (`cassa-integrate`, `cassa-run`)
+
+| Flag | Effect |
+|---|---|
+| `--cpu-fraction F` | Fraction of the machine's cores to use, `0`–`1`. |
+| `--cores N` | Hard ceiling in cores, applied after the fraction. |
+| `--max-memory-gb GB` | Memory the run should stay inside. Advisory — the estimate is checked against it and a run that will not fit says so before it starts. |
+
+Any of these also **suppresses the interactive CPU prompt**: a stated budget is
+an answer, and being asked again would make the flag useless in a batch job or a
+notebook. They override the corresponding `phase2` config keys.
+
 A step may be named bare (`--skip flat`) or qualified (`--skip phase1.flat`).
 The qualified form only matters for `cassa-run`, where two phases both declare
 `measure_fwhm`: there, a bare name that is ambiguous is an **error** rather than
@@ -293,6 +305,9 @@ simply skipped.
 | `warp_order` | `3` | Spline order for the geometric warp. |
 | `epoch_bin` | `night` | `none` (all dates together), `night` (binned on **local noon**, so a night crossing UT midnight stays whole), or a duration such as `"6h"` for sub-night bins. |
 | `raw_dir` | `null` | Raw tree for the QA PDF's raw panel. Normally unset — phase 1 stamps `RAWDIR`. |
+| `cpu_fraction` | `null` | Fraction of the machine's cores to use, `0`–`1`. `null` prompts on a terminal and takes 0.5 otherwise. Setting it suppresses the prompt. |
+| `max_cores` | `null` | Hard ceiling in cores, applied after the fraction. For a share of a shared box rather than a share of the hardware. |
+| `max_memory_gb` | `null` | Memory the run should stay inside, in GB. Advisory: nothing can cap what numpy allocates, but the estimate is checked against it and a run that will not fit says so up front. |
 
 **Plate solving**
 
@@ -681,7 +696,7 @@ phase1.run("raw/", "work/phase1", config=config, instrument=profile)
 | `phase2_integration.math_utils` | `MathEngine`: `register_plane()`, `register_variance()`, `register_mask()`, `weighted_stack()`, `calc_scale()`, `extract_2d_background()`. |
 | `phase2_integration.io` | `FITSHandler`: `extract_metadata()`, `load_planes()`, `save_master()`. |
 | `phase2_integration.epochs` | `epoch_key()`. |
-| `phase2_integration.hardware` | `HardwareManager`. |
+| `phase2_integration.hardware` | `HardwareManager`: `allocate_resources()` honours `cpu_fraction`/`max_cores`; `estimate_resources()` returns the envelope as a dict (cores used vs available, peak RAM vs total, runtime, `fits_in_budget`); `print_estimations()` logs it; `describe()` renders the notebook summary. |
 | `phase2_integration.visuals` | `VisualQAGenerator`, `find_raw_frame()`. |
 | `phase2_integration.models` | `TargetGroup`. |
 
@@ -733,7 +748,7 @@ the number of failures.
 
 | Check | What it establishes |
 |---|---|
-| `platform` | Linux and macOS report OK. **Windows reports WARN** — native support is provisional: everything needed is present and `install.ps1` installs it, but no Windows install has been verified end to end. It is a warning rather than a failure so the exit status does not claim a problem that may not exist. |
+| `platform` | Linux, macOS and Windows all report OK. Windows was a hard failure while no plate solver was published for it; ASTAP ended that and a native install has since been run. |
 | `python` | Interpreter version against the floor in `pyproject.toml`. |
 | `cassa-photometry` | The pipeline's own version, whether it is an editable install, and where it lives. |
 | `dependencies` | Every declared runtime requirement, against its minimum. |

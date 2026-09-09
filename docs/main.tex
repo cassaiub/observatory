@@ -314,31 +314,33 @@ macOS Intel & \texttt{./install.sh} & Identical to Linux x86-64. \\
 \hline
 macOS Apple Silicon & \texttt{./install.sh} & \texttt{solve-field} has no \texttt{osx-arm64} build; ASTAP or the in-process solver is used. \\
 \hline
-Windows x64 / ARM64 & \texttt{.\textbackslash install.ps1} & \textbf{Provisional.} ASTAP is the one backend published for Windows, and the installer fetches it. Not yet verified end to end. \\
+Windows x64 / ARM64 & \texttt{.\textbackslash install.ps1} & ASTAP is the one backend published for Windows, and the installer fetches it. \\
 \hline
-Windows, tested route & WSL, then the Linux route & Real x86-64 Linux, so every instruction applies unchanged inside it. \\
+Windows, alternatively & WSL, then the Linux route & Real x86-64 Linux, so every instruction applies unchanged inside it. \\
 \hline
 \end{tabularx}
 \end{center}
 
 \begin{mdframed}[backgroundcolor=procbg, linecolor=secondary, linewidth=1.5pt, roundcorner=4pt]
-\textbf{Windows: two routes, and why there are two.} Windows was originally
-unsupported on the grounds that no plate solver was published for it. That is no
-longer true. ASTAP ships command-line builds for \texttt{win64},
-\texttt{win32} and ARM64, and all sixteen runtime dependencies have Windows
-wheels or are pure Python --- so \texttt{install.ps1} now builds a real
-environment rather than printing instructions.
+\textbf{Windows: supported, and the history is worth knowing.} Windows was
+unsupported for as long as no plate solver was published for it. ASTAP ended
+that --- it ships command-line builds for \texttt{win64}, \texttt{win32} and
+ARM64 --- and all sixteen runtime dependencies have Windows wheels or are pure
+Python, so \texttt{install.ps1} builds a real environment.
 
-What is missing is \emph{evidence}. No native Windows install has been verified
-end to end, so \texttt{cassa-doctor} reports the platform as \textbf{provisional}
---- a warning, not a failure, because failing would assert a problem nobody has
-observed while passing silently would assert a guarantee nobody has earned.
+A native install has since been run. Two Windows-only defects surfaced in that
+first run and are fixed: a memory-mapped array kept a master stack open so
+phase 2 could not write it back
+(\texttt{PermissionError: [WinError 32]}), and Astrometry.net index files were
+being fetched for a backend that never reads them. Both were invisible on
+POSIX --- the first because POSIX permits replacing an open file, the second
+because it only wasted bandwidth --- which is why they survived until someone
+ran the pipeline on Windows.
 
-\textbf{For anything with a deadline, use WSL.} It is real x86-64 Linux and it is
-the configuration this project exercises. \texttt{.\textbackslash install.ps1
--Wsl} prints those steps without installing anything. For your own machine, the
-native route is worth trying --- and a report either way is what turns
-``provisional'' into ``supported''.
+WSL remains a good route and is real x86-64 Linux, so every instruction in this
+manual applies unchanged inside it. \texttt{.\textbackslash install.ps1 -Wsl}
+prints those steps without installing anything. It is simply no longer the only
+option.
 \end{mdframed}
 
 \subsection{Installing on Linux}
@@ -394,7 +396,7 @@ xattr -d com.apple.quarantine "$(command -v astap_cli)"
 \end{mdframed}
 
 \subsection{Installing on Windows}
-\subsubsection{Native (provisional)}
+\subsubsection{Natively}
 \begin{lstlisting}[language=bash]
 git clone https://github.com/cassaiub/observatory.git
 cd observatory\photometric_pipeline
@@ -408,7 +410,8 @@ active conda environment, else conda, else a plain \texttt{venv} in
 command-line build matching the machine's architecture, and finishes by running
 \texttt{cassa-doctor}. It takes the same options, in PowerShell form:
 \texttt{-Conda}, \texttt{-Venv}, \texttt{-NewEnv}, \texttt{-EnvName},
-\texttt{-NoDev}, \texttt{-NoDoctor}, and \texttt{-Wsl}.
+\texttt{-NoDev}, \texttt{-NoDoctor}, and \texttt{-Wsl}. It also registers the
+Jupyter kernel, as \texttt{install.sh} does.
 
 \begin{mdframed}[backgroundcolor=rawbg, linecolor=primary, linewidth=1pt, roundcorner=4pt]
 \textbf{One trap worth knowing about}, because it is invisible when it happens.
@@ -421,7 +424,7 @@ magic bytes before trusting it, rather than leaving a broken solver to surface
 at the first plate solve.
 \end{mdframed}
 
-\subsubsection{Through WSL (the tested route)}
+\subsubsection{Through WSL (the alternative)}
 Two stages: install WSL once from Windows, then follow the Linux instructions
 inside it.
 
@@ -477,6 +480,61 @@ place.
 The Conda route is the one to prefer: \texttt{environment.yml} pins Python,
 brings the scientific stack as prebuilt binaries, and includes JupyterLab for
 the workshop notebooks.
+
+\subsection{Resource Budget: What a Run May Use}
+Phase 2 is the memory-hungry phase --- it holds a whole stack of frames plus
+their variance planes at once --- so it is worth being able to say how much of
+the machine it may take. By default it asks on a terminal and uses half the
+cores when there is nobody to ask. Three settings override that, from the
+command line or a configuration file.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|l|X|}
+\hline
+\textbf{Config key} & \textbf{Flag} & \textbf{Effect} \\
+\hline
+\texttt{phase2.cpu\_fraction} & \texttt{-{}-cpu-fraction} & Fraction of the machine's cores to use, 0--1. \\
+\hline
+\texttt{phase2.max\_cores} & \texttt{-{}-cores} & Hard ceiling in cores, applied after the fraction. For a share of a shared box rather than a share of the hardware. \\
+\hline
+\texttt{phase2.max\_memory\_gb} & \texttt{-{}-max-memory-gb} & Memory the run should stay inside. Advisory --- nothing here can cap what NumPy allocates --- but the estimate is checked against it, so a run that will not fit says so before it starts rather than being discovered as an OOM kill part-way through. \\
+\hline
+\end{tabularx}
+\end{center}
+
+\textbf{Setting any of them also suppresses the interactive prompt.} A stated
+budget is an answer, and being asked again would make the setting useless in
+precisely the places it is most wanted: a batch job, an HPC node, a notebook.
+
+Every run reports the envelope before it starts, and what share of the machine
+that is:
+
+\begin{lstlisting}
+Resource estimate: 34 frames, largest stack 5, peak RAM ~2.2 GB, runtime ~0m 42s.
+Using 32 of 64 cores (50%) and ~2.2 of 184.3 GB RAM (1%).
+\end{lstlisting}
+
+The same numbers are available programmatically ---
+\texttt{HardwareManager.estimate\_resources()} returns them as a dictionary and
+\texttt{describe()} renders the summary --- which is what the workshop's phase 2
+notebook shows a participant before they commit to a run.
+
+\subsection{Jupyter: Registering the Kernel}
+Installing packages sets up an \emph{environment}; it does not make an existing
+Jupyter offer it. Someone who starts JupyterLab from an Anaconda they already
+had, or opens a notebook in VS Code, sees only that Jupyter's own kernels --- and
+the notebooks then fail with \texttt{ModuleNotFoundError: No module named
+'cassa\_photometry'}, which looks exactly like a failed install and is not one.
+
+Both installers therefore register the kernel:
+\begin{lstlisting}[language=bash]
+python -m ipykernel install --user \
+    --name cassa-photometry --display-name "Python (CASSA photometry)"
+\end{lstlisting}
+
+Check that the kernel name in the top-right corner of every notebook reads
+\textbf{Python (CASSA photometry)}; if it does not, use \emph{Kernel
+$\rightarrow$ Change Kernel}.
 
 \subsection{The Plate Solver: Three Backends, One Set of Products}
 \begin{mdframed}[backgroundcolor=masterbg, linecolor=primary, linewidth=1.5pt, roundcorner=4pt]
