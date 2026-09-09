@@ -82,8 +82,13 @@ class InProcessSolver(Solver):
                 radius_deg=float(hints.radius_deg),
             )
 
+        # `astrometry` declares Solver(index_files: list[pathlib.Path]) and calls
+        # path.resolve() on each, so strings raise AttributeError. Passing str()
+        # here made this backend fail for every user on 4.3.x.
+        from pathlib import Path
+
         try:
-            with astrometry.Solver([str(p) for p in index_paths]) as solver:
+            with astrometry.Solver([Path(p) for p in index_paths]) as solver:
                 solution = solver.solve(
                     stars=[(float(x), float(y)) for x, y in stars],
                     size_hint=size_hint,
@@ -143,13 +148,27 @@ class InProcessSolver(Solver):
         return header
 
     def _matched(self, match, stars):
-        """Field/index positions of the matched stars, for the residual."""
+        """Field/index positions of the matched stars, for the residual.
+
+        ``Match.stars`` are the *catalog* stars the solve used; their metadata
+        comes from the index file and never contained our pixel coordinates.
+        Reading ``metadata["x"]`` therefore always failed, and this backend
+        silently recorded no astrometric RMS at all.
+
+        The honest pairing is to project our own extracted sources through the
+        solved WCS and match them to those catalog stars by sky position. No
+        network is needed: the catalog positions come back with the solution.
+        """
+        from cassa_photometry.phase2_integration.astrometry_qc import (
+            pair_by_position,
+        )
+
         try:
             index_ra = np.array([s.ra_deg for s in match.stars], dtype=float)
             index_dec = np.array([s.dec_deg for s in match.stars], dtype=float)
-        except Exception:
-            return None
-        try:
+            if index_ra.size == 0:
+                return None
+
             from astropy.io import fits
             from astropy.wcs import WCS
 
@@ -157,11 +176,10 @@ class InProcessSolver(Solver):
             for key, value in match.wcs_fields.items():
                 header[key] = value if not isinstance(value, tuple) else value[0]
             wcs = WCS(header)
-            pixels = np.array([(s.metadata.get("x", np.nan), s.metadata.get("y", np.nan))
-                               for s in match.stars], dtype=float)
-            if not np.isfinite(pixels).all():
-                return None
-            field_ra, field_dec = wcs.all_pix2world(pixels[:, 0], pixels[:, 1], 0)
+            field_ra, field_dec = wcs.all_pix2world(
+                np.asarray(stars)[:, 0], np.asarray(stars)[:, 1], 0)
         except Exception:
             return None
-        return (field_ra, field_dec, index_ra, index_dec)
+
+        return pair_by_position(field_ra, field_dec, index_ra, index_dec,
+                                radius_arcsec=5.0)

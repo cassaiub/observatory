@@ -57,10 +57,12 @@ workshop/slides/lecture_script.*
 # Internal engineering plans. Kept out of the repository because they are
 # working documents for whoever develops the pipeline, not reference material
 # for the people who run it: they carry defect audits, work-package checklists
-# and frank assessments of code that has since been fixed. Participants and
-# users are served by CUSTOMIZING.md (how to configure and extend a run) and
-# CHANGELOG.md (what changed), both of which ARE tracked.
+# and frank assessments of code that has since been fixed. Users are served by
+# the three documents that ARE tracked: REFERENCE.md (every command, config key,
+# keyword and function), CUSTOMIZING.md (how to configure and extend a run) and
+# CHANGELOG.md (what changed, and what it means for existing data).
 docs/master-plan.md
 docs/step-plan.md
 docs/target-driven-photometry-plan.md
 docs/astrometry-index-plan.md
+docs/astap-backend-plan.md

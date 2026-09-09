@@ -35,6 +35,7 @@ from cassa_photometry.instruments import get_profile
 from cassa_photometry.phase2_integration.solvers import (
     SolveFieldSolver,
     SolveHints,
+    SolveResult,
     get_solver,
     solved_pixel_scale,
 )
@@ -196,7 +197,7 @@ class WCSSolver:
         self.global_anchor_ra = header.get("CRVAL1")
         self.global_anchor_dec = header.get("CRVAL2")
 
-        self._record_residual(header, result)
+        self._record_residual(header, result, filepath)
         self._check_scale(header, original_header)
         header["WCSSOLVR"] = (result.backend, "Plate-solving backend")
 
@@ -206,12 +207,38 @@ class WCSSolver:
                   history=f"PHASE 2: WCS solved via {result.backend}")
         self.logger.info("    [+] SUCCESS: WCS mapped (%s).", result.backend)
 
-    def _record_residual(self, header, result):
-        """Stamp the astrometric RMS, which says whether the WCS actually fits."""
+    def _record_residual(self, header, result, filepath):
+        """Stamp the astrometric RMS, which says whether the WCS actually fits.
+
+        The backends do not agree about what they hand back -- ``solve-field``
+        writes a matched-star table, ASTAP writes none -- so a residual taken
+        only from the solver would exist on one install path and not the other.
+        Phase 3 sizes its cross-match radius from ``ASTRMS``, so that difference
+        would quietly change the photometry depending on which solver happened
+        to be installed.
+
+        The solver's own table is used when it has one, because it needs no
+        catalog query; otherwise the residual is measured here, against the
+        reference catalog phase 3 already caches. Either way the card means the
+        same thing and every backend produces it.
+        """
         residuals = result.residuals()
+        source = "solver"
+        if residuals is None:
+            from cassa_photometry.phase2_integration import astrometry_qc
+
+            matched = astrometry_qc.measure(filepath, header, self.config,
+                                            self.logger)
+            if matched is not None:
+                residuals = SolveResult(True, matched=matched).residuals()
+                source = "reference catalog"
+
         if residuals is None:
             self.logger.warning(
-                "    [!] Solved, but no matched-star table: astrometric RMS not recorded."
+                "    [!] Solved, but the astrometric RMS could not be measured "
+                "(no matched-star table from %s, and no reference catalog "
+                "available). Phase 3 will fall back to a fixed match radius.",
+                result.backend,
             )
             return
         rms_ra, rms_dec, n_stars = residuals
@@ -219,10 +246,12 @@ class WCSSolver:
         header["CRDER1"] = (rms_ra / 3600.0, "[deg] RMS astrometric residual, axis 1")
         header["CRDER2"] = (rms_dec / 3600.0, "[deg] RMS astrometric residual, axis 2")
         header["ASTRMS"] = (total, "[arcsec] total RMS astrometric residual")
-        header["ASTNSTAR"] = (n_stars, "Stars matched against the astrometry index")
+        header["ASTNSTAR"] = (n_stars, "Stars matched for the astrometric RMS")
+        header["ASTRMSRC"] = (source, "How the astrometric RMS was measured")
         self.logger.info(
-            "    [+] Astrometric RMS: %.3f\" RA, %.3f\" Dec, %.3f\" total (%d stars)",
-            rms_ra, rms_dec, total, n_stars,
+            "    [+] Astrometric RMS: %.3f\" RA, %.3f\" Dec, %.3f\" total "
+            "(%d stars, via %s)",
+            rms_ra, rms_dec, total, n_stars, source,
         )
 
     def _check_scale(self, solved_header, original_header):

@@ -52,15 +52,17 @@ def check_platform():
     """The pipeline targets Linux and macOS. Native Windows is not supported.
 
     Reported here rather than left to fail later, because the later failure is
-    unhelpful: everything installs, and the run dies at the first WCS solve with
-    a missing-solver error that does not say why no solver can be had. Phase 2
-    needs a plate solver and neither channel publishes one for Windows --
-    conda-forge builds ``astrometry`` for linux-64 and osx-64 only, and the PyPI
-    in-process solver ships no Windows wheel. Without a WCS there is no
-    reference-catalog cross-match, so no zero point and no calibrated magnitude.
+    unhelpful: an environment that builds and then dies part-way through a run
+    tells the user nothing about why.
 
-    WSL is real x86-64 Linux, so it is not a special case: every instruction
-    applies unchanged inside it.
+    This is a scope decision about what is *tested*, not a claim that nothing
+    could work. ASTAP does publish a Windows build, so a plate solver exists
+    there now; what does not exist is a native install path -- ``install.sh`` is
+    a shell script, the packaging classifiers and the test suite cover Linux and
+    macOS, and no native Windows configuration has been verified end to end.
+
+    WSL is real x86-64 Linux, so it is not a separate target: every instruction
+    applies unchanged inside it, and it is the route that is actually tested.
     """
     system = platform.system()
     detail = f"{system} {platform.machine()}"
@@ -148,16 +150,56 @@ def _solve_field_version(executable):
         return "version unknown"
 
 
+def check_astap_database(config=None):
+    """How many ASTAP star tiles are cached locally.
+
+    Unlike the astrometry.net index set there is nothing to pre-download: tiles
+    are fetched per field, a few megabytes at a time. So an empty cache is
+    normal on a fresh install and is reported as information, not a problem.
+    """
+    from cassa_photometry.astap_db import resolve_db_dir
+
+    if config is None:
+        from cassa_photometry.config import load_config
+
+        config = load_config()
+
+    directory = resolve_db_dir(config)
+    if not os.path.isdir(directory):
+        return Check("astap database", OK,
+                     f"{directory} (empty; tiles are fetched per field)")
+    tiles = [n for n in os.listdir(directory) if not n.endswith(".part")]
+    size = sum(os.path.getsize(os.path.join(directory, n)) for n in tiles) / 1048576.0
+    if not tiles:
+        return Check("astap database", OK,
+                     f"{directory} (empty; tiles are fetched per field)")
+    return Check("astap database", OK,
+                 f"{len(tiles)} tile(s), {size:.0f} MB in {directory}")
+
+
 def check_solvers():
     """Which plate-solving backends are usable.
 
-    Two are supported and either is sufficient. Note that conda-forge's
+    Three are supported and any one is sufficient. Note that conda-forge's
     ``astrometry`` package (which supplies ``solve-field``) installs a Python
     module *also* called ``astrometry``, distinct from the PyPI package of that
     name that provides the in-process solver -- so presence of the module says
     nothing until we look for ``Solver`` on it.
     """
     checks = []
+
+    # ASTAP first: it is what `auto` prefers, and the one most likely to be
+    # present on a machine where neither of the others can be installed.
+    from cassa_photometry.phase2_integration.solvers.astap import find_binary
+
+    astap = find_binary()
+    if astap:
+        checks.append(Check("solver: astap", OK, astap))
+    else:
+        checks.append(Check(
+            "solver: astap", WARN, "not on PATH",
+            "apt install astap-cli   # or https://www.hnsky.org/astap.htm",
+        ))
 
     executable = shutil.which("solve-field")
     if executable:
@@ -196,8 +238,8 @@ def check_solvers():
                 "solver: any",
                 FAIL,
                 "no usable plate solver -- phase 2 cannot solve a WCS",
-                'pip install "cassa-photometry[solver]"   '
-                "# or: conda install -c conda-forge astrometry",
+                "apt install astap-cli   "
+                '# or: pip install "cassa-photometry[solver]"',
             )
         )
     else:
@@ -335,6 +377,7 @@ def run_checks(config=None, skip_network=False):
     checks += check_dependencies()
     checks += check_solvers()
     checks += check_astrometry_indexes(config)
+    checks.append(check_astap_database(config))
     if not skip_network:
         checks += check_network()
     checks.append(check_writable())

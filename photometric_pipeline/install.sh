@@ -106,58 +106,134 @@ say "Installing cassa-photometry (editable)"
 
 # --- make sure there is a plate solver ---------------------------------------
 #
-# Phase 2 needs one of two backends. `solve-field` (the Astrometry.net binary)
-# cannot be pip-installed, so when it is missing we add the PyPI `astrometry`
-# package, which solves in-process.
+# Phase 2 needs a plate solver, and three backends can provide one. They are
+# tried in this order, and the first that installs wins:
 #
-# These two MUST NOT coexist: conda-forge's astrometry package installs Python
-# bindings that import under the same name as the PyPI solver, and whichever
-# lands second wins. So this only ever runs when solve-field is absent.
+#   1. ASTAP        -- a sub-megabyte binary with no Python dependency, packaged
+#                      for Debian/Ubuntu and published for Linux x86-64 and
+#                      aarch64 and for macOS on Intel and Apple Silicon. It is
+#                      the only backend that exists on ARM Linux at all, and it
+#                      fetches just the sky tiles a field needs (~6 MB) instead
+#                      of a multi-gigabyte index set.
+#   2. solve-field  -- the Astrometry.net binary, from conda-forge. The
+#                      reference implementation, and the only backend that
+#                      supplies its own matched-star table.
+#   3. astrometry   -- the PyPI in-process solver, so a pip-only machine with no
+#                      system packages still works.
+#
+# solve-field and the PyPI package MUST NOT coexist: conda-forge's astrometry
+# package installs Python bindings that import under the same name, and
+# whichever lands second wins. Step 3 therefore only runs when step 2 did not.
+#
+# Whichever lands, the pipeline produces the same products: the astrometric
+# residual is measured against a reference catalog when the backend cannot
+# supply matched stars, so ASTRMS exists on every path.
 say "Checking for a plate solver"
 ENV_BIN="$(dirname "$PY")"
 UNAME_S="$(uname -s 2>/dev/null || echo unknown)"
 UNAME_M="$(uname -m 2>/dev/null || echo unknown)"
 
+has_astap() {
+    command -v astap_cli >/dev/null 2>&1 || command -v astap >/dev/null 2>&1
+}
+
 has_solve_field() {
     command -v "$ENV_BIN/solve-field" >/dev/null 2>&1 || command -v solve-field >/dev/null 2>&1
 }
 
-if has_solve_field; then
-    echo "    solve-field found -- using the Astrometry.net binary."
-    echo "    (not installing the PyPI 'astrometry' package: same import name)"
-else
-    # conda-forge builds `astrometry` for linux-64 and osx-64 ONLY. Asking for
-    # it anywhere else fails the whole transaction, so the platform is checked
-    # first rather than letting conda report a confusing solver error.
+# The upstream command-line zip, per platform. Empty means "no build we can
+# fetch unattended"; that platform falls through to the next backend.
+astap_zip_url() {
+    local base="https://sourceforge.net/projects/astap-program/files"
     case "${UNAME_S}/${UNAME_M}" in
-        Linux/x86_64|Darwin/x86_64) CONDA_SOLVER_OK=1 ;;
-        *)                          CONDA_SOLVER_OK=0 ;;
+        Linux/x86_64)   echo "$base/linux_installer/astap_command-line_version_Linux_amd64.zip/download" ;;
+        Linux/aarch64)  echo "$base/linux_installer/astap_command-line_version_Linux_aarch64.zip/download" ;;
+        Darwin/x86_64)  echo "$base/macOS%20installer/astap_command-line_version_macOS_x86_64.zip/download" ;;
+        Darwin/arm64)   echo "$base/macOS%20installer/astap_command-line_version_macOS_M1.zip/download" ;;
+        *)              echo "" ;;
     esac
+}
 
-    if [[ "$MODE" != "venv" && $CONDA_SOLVER_OK -eq 1 ]] && command -v conda >/dev/null 2>&1; then
-        echo "    Installing Astrometry.net from conda-forge."
-        if [[ "$MODE" == "conda" ]]; then
-            conda install -y -n "$ENV_NAME" -c conda-forge astrometry || true
-        else
-            conda install -y -c conda-forge astrometry || true
+install_astap() {
+    # Prefer the distribution package: it is signed, updated with the system,
+    # and needs no unpacking. Only fall back to the upstream zip when apt is
+    # absent or the package is not there.
+    if command -v apt-get >/dev/null 2>&1 && [[ $(id -u) -eq 0 || -n "${SUDO_USER:-}" ]]; then
+        if apt-get install -y astap-cli >/dev/null 2>&1; then
+            has_astap && { echo "    ASTAP installed from apt (astap-cli)."; return 0; }
+        fi
+    fi
+
+    local url
+    url="$(astap_zip_url)"
+    [[ -n "$url" ]] || return 1
+    command -v curl >/dev/null 2>&1 || return 1
+    command -v unzip >/dev/null 2>&1 || return 1
+
+    local dest="$ENV_BIN"
+    [[ -w "$dest" ]] || dest="$HOME/.local/bin"
+    mkdir -p "$dest" || return 1
+
+    local tmp
+    tmp="$(mktemp -d)" || return 1
+    if curl -fsSL -o "$tmp/astap.zip" "$url" && unzip -o -q "$tmp/astap.zip" -d "$tmp"; then
+        # The zip holds the bare executable; name varies slightly by platform.
+        local binary
+        binary="$(find "$tmp" -maxdepth 2 -type f -name 'astap*' ! -name '*.zip' | head -1)"
+        if [[ -n "$binary" ]]; then
+            install -m 0755 "$binary" "$dest/astap_cli" 2>/dev/null || {
+                cp "$binary" "$dest/astap_cli" && chmod +x "$dest/astap_cli"; }
+            rm -rf "$tmp"
+            export PATH="$dest:$PATH"
+            has_astap && { echo "    ASTAP installed to $dest/astap_cli."; return 0; }
+        fi
+    fi
+    rm -rf "$tmp"
+    return 1
+}
+
+if has_astap; then
+    echo "    ASTAP found -- using it."
+elif install_astap; then
+    :
+else
+    echo "    ASTAP unavailable here; trying Astrometry.net."
+
+    if ! has_solve_field; then
+        # conda-forge builds `astrometry` for linux-64 and osx-64 ONLY. Asking
+        # for it anywhere else fails the whole transaction, so the platform is
+        # checked first rather than letting conda report a confusing error.
+        case "${UNAME_S}/${UNAME_M}" in
+            Linux/x86_64|Darwin/x86_64) CONDA_SOLVER_OK=1 ;;
+            *)                          CONDA_SOLVER_OK=0 ;;
+        esac
+
+        if [[ "$MODE" != "venv" && $CONDA_SOLVER_OK -eq 1 ]] && command -v conda >/dev/null 2>&1; then
+            echo "    Installing Astrometry.net from conda-forge."
+            if [[ "$MODE" == "conda" ]]; then
+                conda install -y -n "$ENV_NAME" -c conda-forge astrometry || true
+            else
+                conda install -y -c conda-forge astrometry || true
+            fi
         fi
     fi
 
     if has_solve_field; then
-        echo "    solve-field installed."
+        echo "    solve-field available."
     else
-        # The in-process solver covers every platform we support, including
-        # Apple Silicon, where conda-forge has no astrometry build at all.
+        # The in-process solver covers Linux x86-64 and both macOS
+        # architectures. It publishes no wheel for ARM Linux, which is exactly
+        # where ASTAP is the only option.
         case "${UNAME_S}/${UNAME_M}" in
             Linux/x86_64|Darwin/x86_64|Darwin/arm64)
-                echo "    Using the in-process solver (no solve-field binary here)."
+                echo "    Using the in-process solver (no ASTAP or solve-field here)."
                 "$PY" -m pip install -e ".[solver]"
                 ;;
             *)
-                warn "No plate solver is available for ${UNAME_S}/${UNAME_M}: conda-forge"
-                warn "has no astrometry build and there is no in-process solver wheel."
+                warn "No plate solver could be installed for ${UNAME_S}/${UNAME_M}."
                 warn "Phase 2 will stack but cannot solve a WCS, so Phase 3 cannot"
-                warn "measure a zero point. Run this inside x86-64 Linux (WSL works)."
+                warn "measure a zero point. Install ASTAP by hand from"
+                warn "https://www.hnsky.org/astap.htm and set phase2.astap_path."
                 ;;
         esac
     fi

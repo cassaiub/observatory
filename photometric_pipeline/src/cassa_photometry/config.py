@@ -243,10 +243,35 @@ class Phase2Config:
     subtract_background: bool = True
     warp_order: int = 3
     # --- Plate solving --------------------------------------------------------
-    # Which backend solves the WCS: "auto" prefers the solve-field binary when it
-    # is on PATH and falls back to the in-process solver; "solve-field" and
-    # "astrometry-py" force one.
+    # Which backend solves the WCS. "auto" tries them in the order ASTAP,
+    # solve-field, astrometry-py and uses the first that can actually run;
+    # naming one forces it. ASTAP is preferred because it is a sub-megabyte
+    # binary with no Python dependency, packaged for every platform this
+    # pipeline supports -- including ARM Linux, where neither of the other two
+    # exists -- and because it solved the CASSA test frames in 0.1 s against
+    # 41 s for the in-process solver.
     solver: str = "auto"
+    # Path to the ASTAP executable. None -> look for astap_cli then astap on PATH.
+    astap_path: str | None = None
+    # Where ASTAP star tiles live. None -> CASSA_ASTAP_DB, then
+    # ~/.cache/cassa-photometry/astap. Mirrors the astrometry.net index cache.
+    astap_db_dir: str | None = None
+    # Which ASTAP series to fetch from. "auto" picks one from the frame's own
+    # field height; naming a series forces it. d50 covers 6 deg down to well
+    # under its documented 0.2 deg floor (verified solving a 0.17 deg field),
+    # which spans every CASSA telescope, and is the only series published as a
+    # ZIP -- the format that makes per-tile fetching possible at all.
+    astap_db_series: str = "auto"
+    # Where the published archives live. Only series distributed as a ZIP can be
+    # fetched incrementally, which is why this points at the star_databases tree.
+    astap_db_url: str = ("https://sourceforge.net/projects/astap-program/files/"
+                         "star_databases/")
+    # Fetch missing tiles on demand. False selects but never downloads, and
+    # reports which tiles a field needs -- the air-gapped case.
+    astap_db_download: bool = True
+    # How many tiles either side of the field centre to keep. 1 covers a field
+    # sitting on a tile edge and a pointing that is a few arcminutes out.
+    astap_tile_neighbours: int = 1
     # Astrometry index directory holding a full local set. None -> resolve from
     # the CASSA_ASTROMETRY_INDEX env var, then ./astrometry_data. A populated
     # directory still wins over the on-demand cache, so existing installations

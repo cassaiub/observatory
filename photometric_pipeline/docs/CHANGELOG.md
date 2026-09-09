@@ -20,6 +20,43 @@ instrument layer built around the CASSA 8-inch.
 
 ### Added
 
+- **ASTAP as a third plate-solving backend, and the one the installer prefers.**
+  `install.sh` now tries **ASTAP → `solve-field` → in-process** and uses the
+  first that installs; `phase2.solver: auto` prefers them in the same order.
+  ASTAP is an 875 KB binary with no Python dependency, packaged as `astap-cli`
+  on Debian and Ubuntu and published for Linux x86-64 and aarch64 and for macOS
+  on both Intel and Apple Silicon — it is the only backend that exists on ARM
+  Linux, where neither conda-forge nor PyPI ships an astrometry.net solver at
+  all. On the CASSA test frames it solved in **0.11 s** against 41 s for the
+  in-process solver, and it recovered the true plate scale from a header that
+  stated it wrongly. New settings: `astap_path`, `astap_db_dir`,
+  `astap_db_series`, `astap_db_url`, `astap_db_download`,
+  `astap_tile_neighbours`. `WCSSOLVR` records which backend solved a frame.
+- **`ASTRMS` is now measured by the pipeline, so every backend produces it.**
+  ASTAP reports no matched star pairs, and phase 3 sizes its reference-catalog
+  cross-match radius from `ASTRMS` — so taking the residual from the solver
+  would have made the photometry depend on which solver a machine happened to
+  install (a missing `ASTRMS` silently falls back to a fixed 2″ radius). The new
+  `phase2_integration.astrometry_qc` measures it from things every backend
+  produces: the solved WCS, sources detected with `sep`, and reference
+  positions. Where a backend supplies its own catalog stars they are used (no
+  network); otherwise the cached reference catalog is reused. The header records
+  which route was taken as **`ASTRMSRC`**. Measured end to end: ASTAP solved,
+  then the pipeline measured `ASTRMS 0.358″` from 83 Gaia stars.
+- **ASTAP star tiles are fetched per field, like the astrometry indexes.** ASTAP
+  publishes no per-tile URL — its databases are one 859 MB ZIP — so
+  `astap_db.py` reads individual tiles out of that archive with HTTP range
+  requests: a ZIP's central directory lists every member's offset, so only the
+  members a field needs are transferred. Measured: central directory 85 KB, then
+  **6.2 MB in 33 range requests** for the NGC 7331 field, against 859 MB for the
+  whole archive. Repointing costs only the tiles the new field adds — first
+  field 65 s from a cold cache, **1.2 s** for the next with no download.
+  `astap_db_download: false` still performs the selection and names the missing
+  tiles, for an air-gapped machine. Nothing is hosted by the observatory.
+- **A complete reference document, `docs/REFERENCE.md`**, and Part VI of the
+  observatory manual: every command and flag, every configuration key with its
+  default, every environment variable, every FITS keyword read and written,
+  every catalog column, the DQ bits, and the module-by-module Python API.
 - **[science] A cosmic-ray mask that cannot be real is now thrown away.** In a
   crowded field astroscrappy cannot separate a stellar peak from a cosmic ray,
   and it *replaces* what it flags: on a globular cluster it deleted 23% of the
@@ -146,9 +183,11 @@ instrument layer built around the CASSA 8-inch.
   and verifies the result. `environment.yml` is now a real file in the repo
   rather than copy-paste text in the manual.
   *(Corrected 2026-09-08: this entry originally described `install.ps1` as
-  building a conda environment on Windows. It never could — no plate solver is
-  published for Windows — and the script now installs nothing, printing the WSL
-  setup steps instead. Linux and macOS are the supported platforms.)*
+  building a conda environment on Windows. It never did, and the script now
+  installs nothing, printing the WSL setup steps instead. Linux and macOS are
+  the supported platforms; see the 2026-09-09 note under Added — ASTAP has since
+  made a Windows solver available, but the install tooling and test coverage
+  have not followed, so WSL remains the documented route.)*
 - **`cassa-doctor`** — reports Python, package versions against their declared
   floors, which plate-solver backends are usable, the astrometry index
   situation, network reachability, and write permissions. Non-zero exit only on
@@ -253,6 +292,39 @@ field (`cassa-simulate --preset workshop`):
 - An `--offline` re-run reproduces all three zero points **exactly** from cache.
 - `./install.sh --venv` builds a working installation from a clean checkout;
   the suite passes there (311 tests) as well as under conda (313).
+
+On real iTelescope data (NGC 7331, B/V/R, 1024², 0.17° field), for the solver
+work:
+
+- ASTAP and the in-process solver recover plate scales agreeing to **0.089%**
+  (0.5905 vs 0.5910″/px), from a header that states 0.4″/px — a 32% error, which
+  both the ASTAP warning and `solve_scale_warn_frac` flagged.
+- A cold ASTAP cache fetched **10 tiles, 6.3 MB, 33 range requests**, solved in
+  0.11 s, and the pipeline then measured `ASTRMS 0.358″` from 83 Gaia stars.
+- A second field with the cache warm: **1.2 s, no download**.
+- The suite is now **474 tests** (was 439), including 27 covering the tile
+  arithmetic, the cache and the ASTAP backend, and 8 covering the residual — the
+  cos(dec) de-projection, mutual pairing, and the refusal to report a residual
+  from a single star.
+
+### Fixed
+
+- **The in-process solver was completely broken, and so was its residual.** Two
+  pre-existing bugs, both found while wiring up ASTAP, both fixed:
+  1. `astrometry` 4.3.0 declares `Solver(index_files: list[pathlib.Path])` and
+     calls `path.resolve()`; `inprocess.py` passed `str()`, so every solve raised
+     `AttributeError: 'str' object has no attribute 'resolve'`. With
+     `astrometry>=4.3` pinned in `pyproject.toml`, **the pip-only path — the
+     thing that makes `pip install` sufficient — failed for every user.**
+  2. `_matched()` read `star.metadata["x"]` from `Match.stars`, but those are
+     *catalog* stars whose metadata comes from the index file and never
+     contained our pixel coordinates — so `residuals()` always returned `None`
+     and `ASTRMS` was never written. It now projects the extracted sources
+     through the solved WCS and pairs them with the catalog by position.
+
+  Both were masked by two `test_solvers.py` failures that stopped at "no backend
+  available". Verified: the solve now completes in 41.9 s and the residual
+  returns `(0.801, 0.664, 45)` where it previously returned `None`.
 
 ### Removed
 
