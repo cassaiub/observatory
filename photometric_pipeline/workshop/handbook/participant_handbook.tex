@@ -180,8 +180,8 @@ room costs everyone the first hour.
 \toprule
 \thead{What} & \thead{Why} \\
 \midrule
-A laptop running Linux or macOS & One install route for both. Windows works too, but only
-through WSL --- there is no native Windows install, so start that part early. \\
+A laptop running Linux or macOS & One install route for both, on Intel and ARM alike. Windows
+works too, but through WSL --- so start that part early, it needs a reboot. \\
 $\sim$1\,GB free disk & 267\,MB for the night's raw frames, $\sim$325\,MB for what the
 pipeline writes, plus the environment. On Windows, allow another $\sim$2\,GB for WSL. \\
 Internet, at least once & Installing, and Phase 3's reference-catalog query. Both cache, so a
@@ -202,17 +202,31 @@ One route, on every operating system: get \textbf{Miniforge}, then run one
 script. Windows gets there through WSL --- see below, and do that part first.
 
 \begin{note}[Why Miniforge and not plain pip]
-Phase 2 plate-solves your images against a star catalog, and the solver is a
-compiled binary rather than a Python package. Miniforge is what supplies it,
-along with prebuilt versions of the whole scientific stack, so nothing has to
-compile on your laptop.
+Phase 2 plate-solves your images against a star catalog, and every solver that
+can do it is a compiled binary rather than a Python package. Miniforge is what
+supplies one, along with prebuilt versions of the whole scientific stack, so
+nothing has to compile on your laptop.
 \end{note}
 
+\subsection{Which platform you are on}
+
+\begin{tabularx}{\textwidth}{@{}p{4.6cm}p{3.6cm}X@{}}
+\toprule
+\thead{Your machine} & \thead{Route} & \thead{Notes} \\
+\midrule
+Linux, x86-64            & \cm{./install.sh}        & The reference platform. \\
+Linux, ARM (aarch64)     & \cm{./install.sh -{}-conda} & Works, but only with ASTAP --- nothing else is published for ARM Linux. \\
+macOS, Intel             & \cm{./install.sh}        & Identical to Linux. \\
+macOS, Apple Silicon     & \cm{./install.sh}        & Identical. See the Gatekeeper note below. \\
+Windows                  & WSL, then the Linux route & Do the WSL part first; it needs a reboot. \\
+\bottomrule
+\end{tabularx}
+
 \subsection{Windows only: get to Linux first}
-There is no native Windows install. No plate solver is published for Windows ---
-not on conda-forge, not on PyPI --- so a native environment would build and then
-fail at the first WCS solve, leaving you with no zero point and no calibrated
-magnitude. WSL gives you real x86-64 Linux, where everything works.
+The pipeline is developed and tested on Linux and macOS, and \cm{install.sh} is
+a shell script. WSL gives you real x86-64 Linux on your Windows machine, so
+every instruction in this handbook then applies unchanged --- and it is the
+route that is actually tested, which is why it is the one documented.
 
 From an \textbf{administrator} PowerShell:
 
@@ -231,6 +245,12 @@ Your Windows drives appear under \cm{/mnt/c}, so data you downloaded in Windows
 is reachable. But keep the repository and the work directory in your WSL home
 --- reducing a night across \cm{/mnt} is several times slower.
 \end{caution}
+
+\begin{note}[Running \cm{install.ps1} does nothing]
+It installs nothing on purpose. It prints these WSL steps and stops, so a
+Windows participant is not left with an environment that builds and then cannot
+solve. \cm{cassa-doctor} reports native Windows the same way.
+\end{note}
 
 \subsection{Step 1 --- Install Miniforge}
 Miniforge is a minimal conda that defaults to the conda-forge channel. If you
@@ -256,6 +276,14 @@ conda --version
 \end{cmdtext}
 \end{cmd}
 
+On macOS you also need Apple's command-line tools, once, for \cm{git}:
+
+\begin{cmd}
+\begin{cmdtext}
+xcode-select --install
+\end{cmdtext}
+\end{cmd}
+
 \subsection{Step 2 --- Clone and install}
 Identical everywhere:
 
@@ -272,6 +300,9 @@ The script builds a conda environment called \cm{cassa-photometry} from
 your platform can run, and finishes by checking its own work. Expect ten to
 twenty minutes and a few hundred megabytes.
 
+On ARM Linux add \cm{-{}-conda}: the in-process solver publishes no ARM wheel,
+so the conda route plus ASTAP is the combination that works there.
+
 \subsection{Step 3 --- Activate and verify}
 
 \begin{cmd}
@@ -281,20 +312,40 @@ cassa-doctor
 \end{cmdtext}
 \end{cmd}
 
-\cm{cassa-doctor} is the one command that proves the install: it reports the
-package version, the environment, the plate solver and the index directory.
+\cm{cassa-doctor} is the one command that proves the install: it reports your
+platform, the package version, the environment, which plate solver you have and
+which one a run would use, and where the sky data will come from.
 \textbf{Run it before the session, and bring the output if anything is not
 green.} You need to run \cm{conda activate cassa-photometry} in every new
 terminal.
 
-\begin{note}[Which solver you get]
-On x86-64 Linux and Intel macOS the script installs Astrometry.net's
-\cm{solve-field}. On Apple Silicon there is no build of it, so the in-process
-Python solver is used instead --- slower on hard fields, but correct, and
-nothing else in the session changes. \cm{cassa-doctor} tells you which one you
-have.
+\begin{note}[Which solver you get, and why it does not matter]
+The installer tries three, in order, and the first that installs wins:
+\textbf{ASTAP} (a sub-megabyte binary that works on every platform, including
+ARM), then Astrometry.net's \cm{solve-field}, then an in-process Python solver.
+\cm{cassa-doctor} tells you which one you have.
+
+\textbf{Your results do not depend on the answer.} The one thing ASTAP does not
+report --- the astrometric residual \cm{ASTRMS}, which Phase 3 uses to size its
+catalog cross-match --- the pipeline measures for itself, so every backend
+produces it. If your neighbour has a different solver, your catalogs are still
+comparable.
 \end{note}
 
+\begin{note}[There is nothing to download in advance]
+Plate solving matches your stars against a sky catalog, and those catalogs are
+large --- 859\,MB for ASTAP, some 34\,GB for Astrometry.net. You need neither.
+The pipeline reads your frame's pointing and field size, works out which pieces
+that field needs, and fetches only those: about \textbf{6\,MB} for ASTAP or
+165\,MB for Astrometry.net, cached under \cm{\textasciitilde/.cache/cassa-photometry/}.
+Pointing somewhere new later costs only the pieces the new field adds.
+\end{note}
+
+\begin{caution}[macOS: Gatekeeper may quarantine ASTAP]
+If \cm{cassa-doctor} finds the ASTAP binary but a solve fails with a security
+warning, macOS has quarantined the downloaded file. Clear it once:
+\cm{xattr -d com.apple.quarantine "\$(command -v astap\_cli)"}
+\end{caution}
 % =====================================================================
 \section{Where the data goes}
 % =====================================================================
@@ -542,9 +593,16 @@ Restart}, then run from the first cell. \\
 Notebook 01 says \textbf{STOP} &
 A calibration frame is unusable. Do not reduce past it --- the numbers will look fine and be
 wrong. Raise it in the room. \\
-\cm{solve-field: NOT FOUND} &
-Expected on a pip install. The in-process solver is used instead. Only a problem if Phase 2
-fails to solve. \\
+\cm{solver: solve-field}\newline \cm{not on PATH} &
+Not a fault. Three backends can solve, and \cm{cassa-doctor}'s \cm{solver: in use} line says
+which one you have. Only a problem if \cm{solver: any} \emph{fails} --- that means none is
+installed. \\
+\cm{no star database covering}\newline \cm{this field} &
+ASTAP could not fetch the sky tiles for your pointing. Check your connection; the tiles are
+about 6\,MB and are fetched during the solve. \\
+macOS: ASTAP found, but the\newline solve fails with a security\newline warning &
+Gatekeeper has quarantined the downloaded binary. Clear it once with
+\cm{xattr -d com.apple.quarantine "\$(command -v astap\_cli)"} \\
 Phase 3: \emph{zero point failed}, no \cm{\_fluxcal.fits} &
 The cross-match found no usable stars in your image. The catalog is still written with
 instrumental magnitudes and the exercises adapt. Worth investigating, not worth blocking on. \\
@@ -570,7 +628,7 @@ output rather than a description.
 {\sffamily\scriptsize\color{inkfaint}
 CASSA Observatory \textbullet\ Independent University, Bangladesh --- rooftop observatory,
 Dhaka.\\
-Pipeline documentation lives in the repository: \texttt{README.md} and
-\texttt{docs/CUSTOMIZING.md}.}
+Pipeline documentation lives in the repository: \texttt{README.md},
+\texttt{docs/REFERENCE.md} and \texttt{docs/CUSTOMIZING.md}.}
 
 \end{document}

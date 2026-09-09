@@ -39,7 +39,7 @@ wedge prism over one hole (so every star produces two spots).
 ## Installation
 
 ```bash
-conda activate pipeline_env          # provides numpy/scipy/astropy/photutils/matplotlib
+conda activate cassa-photometry      # provides numpy/scipy/astropy/photutils/matplotlib
 cd DIMM
 pip install -e . --no-deps --no-build-isolation
 ```

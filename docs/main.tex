@@ -16,6 +16,7 @@
 \usepackage{listings}
 \usepackage{mdframed}
 \usepackage{booktabs}
+\usepackage{longtable}
 \usepackage{amsmath}
 \usetikzlibrary{shapes.geometric, arrows.meta, positioning, fit, backgrounds, calc, shadows}
 
@@ -100,6 +101,8 @@
     {\large \textbf{Part IV:} Atmospheric Seeing Monitor (\texttt{cassa-dimm}) \par}
     \vspace{0.2in}
     {\large \textbf{Part V:} Sensor Characterization Pipeline (\texttt{cassa-camchar}) \par}
+    \vspace{0.2in}
+    {\large \textbf{Part VI:} Complete Reference --- commands, configuration, keywords, API \par}
     \vfill
     \vspace{0.5in}
     {\normalsize \today\par}
@@ -289,57 +292,131 @@ cassa-camchar-analyze data --outdir camchar_output
 \addcontentsline{toc}{part}{Part II: Pipeline Environment Deployment}
 
 \section{Installation \& Deployment Guide}
-This section covers the full setup of the \texttt{cassa-photometry} pipeline from scratch on Linux systems. The workflow is: (1) build a reproducible Conda environment that provides the scientific libraries and the \texttt{solve-field} binary, (2) install the \texttt{cassa-photometry} package to register its command-line tools, and (3) provide the astrometry index files. Instructions for bypassing HPC network-drive database locks are included, as these are commonly encountered on mounted network storage.
+This section covers the full setup of the \texttt{cassa-photometry} pipeline
+from scratch, on each of the three operating systems a user is likely to bring.
+The pipeline installs itself: one script chooses an environment, installs every
+dependency \emph{including a working plate solver}, installs the package, and
+then checks its own work. Nothing has to be downloaded in advance --- not the
+scientific stack, not the solver, and not the multi-gigabyte sky catalogues
+plate solving needs.
 
-\subsection{Installation}
-The pipeline installs itself. Clone the repository and run one command:
-\begin{lstlisting}[language=bash]
-git clone <repository-url>
-cd photometric_pipeline
-./install.sh
-\end{lstlisting}
-
-\texttt{install.sh} chooses an environment (an already-active Conda environment,
-else Conda if it is available, else a plain \texttt{python3 -m venv}), installs
-every dependency \emph{including a working plate solver}, installs the
-\texttt{cassa-photometry} package in editable mode, and then runs
-\texttt{cassa-doctor} to prove the result works. Running it again updates in
-place.
+\subsection{Supported Platforms}
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|l|X|}
+\hline
+\textbf{Platform} & \textbf{Route} & \textbf{Notes} \\
+\hline
+Linux x86-64 & \texttt{./install.sh} & The reference platform; every backend is available. \\
+\hline
+Linux aarch64 & \texttt{./install.sh -{}-conda} & Works, but \textbf{only} with ASTAP: neither conda-forge nor PyPI publishes an astrometry.net solver for ARM Linux. \\
+\hline
+macOS Intel & \texttt{./install.sh} & Identical to Linux x86-64. \\
+\hline
+macOS Apple Silicon & \texttt{./install.sh} & \texttt{solve-field} has no \texttt{osx-arm64} build; ASTAP or the in-process solver is used. \\
+\hline
+Windows & WSL, then the Linux route & Real x86-64 Linux, so every instruction applies unchanged inside it. \\
+\hline
+\end{tabularx}
+\end{center}
 
 \begin{mdframed}[backgroundcolor=procbg, linecolor=secondary, linewidth=1.5pt, roundcorner=4pt]
-\textbf{Supported platforms: Linux and macOS.} There is no native Windows
-install, and none is planned. Phase 2 plate-solves, and neither channel
-publishes a solver for Windows --- conda-forge builds \texttt{astrometry} for
-\texttt{linux-64} and \texttt{osx-64} only, and the PyPI in-process solver ships
-no Windows wheel. A native Windows environment would therefore build
-successfully and then fail at the first WCS solve; without a WCS there is no
-reference-catalog cross-match, hence no zero point and no calibrated magnitude.
+\textbf{Why Windows goes through WSL.} ASTAP does publish a Windows build, so
+the plate solver is no longer the obstacle it was when this decision was taken.
+What is missing is everything around it: \texttt{install.sh} is a shell script,
+the test suite and the packaging classifiers target Linux and macOS, and no
+native Windows configuration has been verified end to end. WSL is the route that
+is tested, so it is the route that is documented and supported.
 
-Windows users run the pipeline inside \textbf{WSL}, which is real x86-64 Linux
---- so it is not a separate platform to support, and every instruction in this
-manual applies unchanged inside it. Running \texttt{install.ps1} from PowerShell
-installs nothing; it prints the WSL setup steps. \texttt{cassa-doctor} also
-reports native Windows as a failure with the same guidance, rather than letting
-the run die later at the solver.
-
-One practical note for WSL: Windows drives are mounted under \texttt{/mnt/c},
-so data downloaded on the Windows side is reachable, but the repository and the
-work directory should live in the Linux filesystem (your WSL home). Reducing a
-night across \texttt{/mnt} is several times slower.
+Running \texttt{install.ps1} from PowerShell installs nothing; it prints the WSL
+setup steps and stops. \texttt{cassa-doctor} likewise reports native Windows as
+a failure with the same guidance, rather than letting a run build successfully
+and then die at the first WCS solve.
 \end{mdframed}
 
-\begin{mdframed}[backgroundcolor=masterbg, linecolor=primary, linewidth=1.5pt, roundcorner=4pt]
-\textbf{Why two solver backends.} Phase 2 needs a plate solver, and
-\texttt{solve-field} --- the Astrometry.net binary --- cannot be installed with
-\texttt{pip}. So the installer adds a pip-installable in-process solver when
-\texttt{solve-field} is absent, which is what makes \texttt{pip install} alone
-sufficient on Linux and macOS. The two must never both be installed:
-conda-forge's Astrometry.net package ships Python bindings that import under the
-same name as the PyPI solver, and whichever lands second wins. The installer
-enforces this; \texttt{cassa-doctor} reports which backend is in use.
+\subsection{Installing on Linux}
+Shown for Debian and Ubuntu; any distribution works, and only the first line
+differs.
+
+\begin{lstlisting}[language=bash]
+sudo apt update && sudo apt install -y git curl unzip
+
+# Miniforge -- a minimal conda that defaults to conda-forge.
+curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+bash Miniforge3-$(uname)-$(uname -m).sh      # accept the defaults
+exec $SHELL -l                                # pick up conda on PATH
+
+git clone https://github.com/cassaiub/observatory.git
+cd observatory/photometric_pipeline
+./install.sh
+
+conda activate cassa-photometry
+cassa-doctor
+\end{lstlisting}
+
+On \textbf{aarch64} (a Raspberry Pi, an ARM server) pass \texttt{-{}-conda}. The
+in-process solver publishes no ARM Linux wheel, so the conda route together with
+ASTAP is the combination that works there.
+
+\subsection{Installing on macOS}
+Intel and Apple Silicon are the same procedure --- the Miniforge installer name
+is built from the machine's own architecture.
+
+\begin{lstlisting}[language=bash]
+xcode-select --install        # once, for git and the toolchain
+
+curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+bash Miniforge3-$(uname)-$(uname -m).sh
+exec $SHELL -l
+
+git clone https://github.com/cassaiub/observatory.git
+cd observatory/photometric_pipeline
+./install.sh
+
+conda activate cassa-photometry
+cassa-doctor
+\end{lstlisting}
+
+\begin{mdframed}[backgroundcolor=rawbg, linecolor=primary, linewidth=1pt, roundcorner=4pt]
+\textbf{Gatekeeper.} macOS quarantines an unsigned binary downloaded from the
+web. If \texttt{cassa-doctor} finds the ASTAP binary but a solve fails with a
+security warning, clear the attribute once:
+\begin{lstlisting}[language=bash]
+xattr -d com.apple.quarantine "$(command -v astap_cli)"
+\end{lstlisting}
 \end{mdframed}
 
-\subsection{Options}
+\subsection{Installing on Windows (through WSL)}
+Two stages: install WSL once from Windows, then follow the Linux instructions
+inside it.
+
+\begin{enumerate}[leftmargin=*]
+    \item From an \textbf{administrator} PowerShell:
+\begin{lstlisting}[language=bash]
+wsl --install
+\end{lstlisting}
+    Reboot when prompted, open \textbf{Ubuntu} from the Start menu, and let it
+    finish creating your user account.
+
+    \item Everything from here is the Linux procedure above, typed inside that
+    Ubuntu window.
+\end{enumerate}
+
+\begin{mdframed}[backgroundcolor=procbg, linecolor=accent, linewidth=1.5pt, roundcorner=4pt]
+\textbf{Keep your files on the Linux side.} Windows drives are mounted under
+\texttt{/mnt/c}, so data downloaded on the Windows side is reachable --- but the
+repository and the work directory belong in the WSL home directory. Reducing a
+night across \texttt{/mnt} is several times slower, and it is a common cause of
+``the pipeline is unbearably slow'' reports that have nothing to do with the
+pipeline.
+\end{mdframed}
+
+\subsection{What \texttt{install.sh} Does}
+It chooses an environment (an already-active Conda environment, else Conda if it
+is available, else a plain \texttt{python3 -m venv}), installs every dependency
+including a plate solver, installs the \texttt{cassa-photometry} package in
+editable mode, and then runs \texttt{cassa-doctor}. Running it again updates in
+place.
+
 \begin{center}
 \begin{tabularx}{\textwidth}{|l|X|}
 \hline
@@ -355,8 +432,138 @@ enforces this; \texttt{cassa-doctor} reports which backend is in use.
 \hline
 \texttt{-{}-no-dev} & Skip \texttt{pytest} and \texttt{ruff}. \\
 \hline
+\texttt{-{}-no-doctor} & Skip the closing health check. \\
+\hline
 \end{tabularx}
 \end{center}
+
+The Conda route is the one to prefer: \texttt{environment.yml} pins Python,
+brings the scientific stack as prebuilt binaries, and includes JupyterLab for
+the workshop notebooks.
+
+\subsection{The Plate Solver: Three Backends, One Set of Products}
+\begin{mdframed}[backgroundcolor=masterbg, linecolor=primary, linewidth=1.5pt, roundcorner=4pt]
+Phase 2 needs a plate solver. The installer tries \textbf{ASTAP} first, then
+\textbf{\texttt{solve-field}} (the Astrometry.net binary, from conda-forge),
+then the \textbf{in-process} PyPI solver; the first that installs wins, and
+\texttt{solver: auto} then prefers whichever is present in the same order.
+
+ASTAP leads because it is a sub-megabyte binary with no Python dependency,
+packaged as \texttt{astap-cli} on Debian and Ubuntu and published for Linux
+x86-64 and aarch64 and for macOS on both Intel and Apple Silicon --- it is the
+only backend that exists on ARM Linux at all. On the CASSA test data it solved
+in \textbf{0.11\,s} against 41\,s for the in-process solver, and it recovered the
+true plate scale from a header that stated it wrongly.
+
+\texttt{solve-field} and the PyPI solver must never both be installed:
+conda-forge's Astrometry.net package ships Python bindings that import under the
+same name, and whichever lands second wins. The installer enforces this;
+\texttt{cassa-doctor} reports which backend is in use.
+
+\textbf{The products do not depend on which one ran.} ASTAP reports no matched
+star pairs, so the astrometric residual \texttt{ASTRMS} --- which Phase 3 sizes
+its reference-catalog cross-match radius from --- is measured by the pipeline
+against a reference catalog rather than taken from the solver. The header
+records which route was used as \texttt{ASTRMSRC}. Without that, the photometry
+would quietly depend on which solver a given machine happened to install.
+\end{mdframed}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|X|}
+\hline
+\textbf{Backend} & \textbf{Where it comes from} & \textbf{Available on} \\
+\hline
+\texttt{astap} & \texttt{apt install astap-cli}, else the upstream zip & Linux x86-64 and aarch64, macOS Intel and Apple Silicon \\
+\hline
+\texttt{solve-field} & conda-forge \texttt{astrometry}, or a system package & Linux x86-64, macOS Intel \\
+\hline
+\texttt{astrometry-py} & \texttt{pip install "cassa-photometry[solver]"} & Linux x86-64, macOS Intel and Apple Silicon \\
+\hline
+\end{tabularx}
+\end{center}
+
+The solver is deliberately \emph{not} listed in \texttt{environment.yml}:
+conda-forge has no \texttt{osx-arm64} build of \texttt{astrometry}, and an
+environment file has no way to say ``only on some platforms'', so listing it
+there makes \texttt{conda env create} fail outright on an Apple Silicon Mac.
+\texttt{install.sh} installs it afterwards, picking the backend the platform can
+actually run.
+
+\subsubsection{Index Files and Star Databases Are Fetched Per Field}
+Neither backend needs a bulk download before a first reduction. Both examine the
+frame --- pointing from the header, field size from the plate scale and the
+array dimensions --- work out which files that field requires, check what is
+already cached, and fetch only the difference.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|X|}
+\hline
+& \textbf{ASTAP} & \textbf{Astrometry.net} \\
+\hline
+Per field & $\sim$\textbf{6\,MB} of star tiles & $\sim$246\,MB of index files \\
+\hline
+Full published set & 859\,MB & $\sim$34\,GB \\
+\hline
+Cache & \texttt{\textasciitilde/.cache/}\allowbreak\texttt{cassa-photometry/}\allowbreak\texttt{astap} & \texttt{\textasciitilde/.cache/}\allowbreak\texttt{cassa-photometry/}\allowbreak\texttt{astrometry} \\
+\hline
+Config override & \texttt{phase2.astap\_db\_dir} & \texttt{phase2.index\_cache\_dir} \\
+\hline
+Environment variable & \texttt{CASSA\_ASTAP\_DB} & \texttt{CASSA\_INDEX\_CACHE} \\
+\hline
+Disable fetching & \texttt{astap\_db\_download: false} & \texttt{index\_download: false} \\
+\hline
+\end{tabularx}
+\end{center}
+
+ASTAP publishes no per-tile URL --- its star databases are distributed as one
+859\,MB ZIP. The pipeline reads individual tiles out of that archive using HTTP
+range requests: a ZIP's central directory lists every member's offset, so only
+the members a field needs are ever transferred. The central directory costs
+85\,KB, the tiles about 6\,MB, and nothing is hosted by the observatory.
+
+Repointing therefore costs only the tiles the new field adds. Measured on the
+workshop data: 6.3\,MB and 65\,s for the first field from an empty cache, then
+\textbf{1.2\,s} for the next field with no download at all. For an air-gapped
+machine, \texttt{phase2.astap\_db\_download: false} still performs the selection
+and reports exactly which tiles are missing rather than hanging.
+
+Series selection is by field height, so a database too sparse for the field is
+never chosen. \texttt{d50} covers 6$^\circ$ down to well under its documented
+0.2$^\circ$ floor --- verified solving a 0.17$^\circ$ field --- which spans every
+CASSA telescope, and it is the only series published as a ZIP. The denser
+\texttt{d80} is distributed only as a \texttt{.deb} and a Windows self-extractor,
+neither of which supports per-member range reads, so it can be used only if the
+user installs it by hand and points \texttt{phase2.astap\_db\_dir} at it.
+
+\subsection{Astrometry Index Files}
+\textbf{There is nothing to download.} Plate solving matches star patterns
+against pre-computed \emph{index files}, and the pipeline works out which ones a
+field needs and fetches those from the public Astrometry.net server, caching
+them under \texttt{\textasciitilde/.cache/}\allowbreak\texttt{cassa-photometry/}\allowbreak\texttt{astrometry}.
+
+The saving is substantial and is the reason this is worth doing automatically: a
+CASSA 8-inch field requires \textbf{4 files, 165\,MB}, out of roughly 34\,GB the
+server offers --- 0.5\% of the set. Selection is exact rather than approximate:
+the quad-scale range each index holds is matched against the field size, and the
+sky tiles are found by sampling the boundary of the search cone, which correctly
+picks up the neighbouring tile for a pointing near an edge.
+
+To prepare a machine before taking it somewhere without a network, or simply to
+see the cost first:
+\begin{lstlisting}[language=bash]
+cassa-index-fetch --from-headers raw/ --dry-run   # what is needed, and how big
+cassa-index-fetch --from-headers raw/             # fetch it
+\end{lstlisting}
+
+ASTAP has no equivalent pre-fetch command because it does not need one: its
+tiles are about 6\,MB per field and are fetched during the solve itself. Run one
+reduction while connected and the cache is warm.
+
+An existing full local set is used in preference and nothing is downloaded:
+\begin{lstlisting}[language=bash]
+export CASSA_ASTROMETRY_INDEX=/path/to/astrometry_data   # a full index set
+export CASSA_ASTAP_DB=/path/to/astap_database            # an installed ASTAP db
+\end{lstlisting}
 
 \subsection{HPC Network Drive Bypass}
 \begin{mdframed}[backgroundcolor=procbg, linecolor=secondary, linewidth=1.5pt, roundcorner=4pt]
@@ -377,58 +584,58 @@ rm ~/miniconda3/pkgs/cache && mkdir -p ~/miniconda3/pkgs/cache
 rm -rf /tmp/pipeline_conda_cache
 \end{lstlisting}
 
-\subsection{Astrometry Index Files}
-\textbf{There is nothing to download.} Plate solving matches star patterns
-against pre-computed \emph{index files}, and the pipeline works out which ones a
-field needs and fetches those from the public Astrometry.net server, caching
-them under \texttt{\textasciitilde/.cache/cassa-photometry/astrometry}.
-
-The saving is substantial and is the reason this is worth doing automatically: a
-CASSA 8-inch field requires \textbf{4 files, 165\,MB}, out of roughly 34\,GB the
-server offers --- 0.5\% of the set. Selection is exact rather than approximate:
-the quad-scale range each index holds is matched against the field size, and the
-sky tiles are found by sampling the boundary of the search cone, which correctly
-picks up the neighbouring tile for a pointing near an edge.
-
-To prepare a machine before taking it somewhere without a network, or simply to
-see the cost first:
-\begin{lstlisting}[language=bash]
-cassa-index-fetch --from-headers raw/ --dry-run   # what is needed, and how big
-cassa-index-fetch --from-headers raw/             # fetch it
-\end{lstlisting}
-
-An existing full local set is used in preference and nothing is downloaded:
-\begin{lstlisting}[language=bash]
-export CASSA_ASTROMETRY_INDEX=/path/to/astrometry_data
-\end{lstlisting}
-
 \subsection{Verification}
-To ensure all packages and C-compiled binaries built correctly for your specific Linux architecture, run these two tests:
-\begin{enumerate}[leftmargin=*]
-    \item \textbf{Verify Astrometry.net} is correctly mapped and accessible by the system:
+\texttt{cassa-doctor} is the single command that proves an installation, and the
+one to run before asking for help. It reports the platform, the Python and
+package versions against what the pipeline requires, every declared dependency,
+which plate-solving backends are usable and which one a run would pick, the
+state of both sky-data caches, whether the reference catalogs are reachable, and
+whether the working directory is writable --- one line each, with the fix for
+anything that failed.
+
 \begin{lstlisting}[language=bash]
-solve-field --version
+cassa-doctor                # exits 0 if everything passed, 1 otherwise
+cassa-doctor --no-network   # skip the reachability checks (air-gapped machine)
 \end{lstlisting}
 
-    \item \textbf{Verify heavy astronomical Python libraries} load without conflict:
-\begin{lstlisting}[language=bash]
-python -c "import astropy, ccdproc, astroalign, photutils, astroquery; print('All core modules loaded successfully!')"
+\begin{lstlisting}
+cassa-doctor
+==========================================================
+[+] platform             Linux x86_64
+[+] python               3.11.9
+[+] cassa-photometry     0.2.0 (editable) at /home/obs/observatory/...
+[+] dependencies         21 requirements satisfied
+[+] solver: astap        /usr/bin/astap_cli
+[!] solver: solve-field  not on PATH
+[!] solver: in-process   PyPI 'astrometry' not installed
+[+] solver: in use       astap
+[+] astap database       10 tiles, 6.3 MB cached
+[+] index cache          empty (~/.cache/cassa-photometry/astrometry)
+[+] work directory       /home/obs/work is writable
 \end{lstlisting}
 
-    \item \textbf{Verify the installed package and its command-line tools:}
+Two backends showing as unavailable is normal, not a fault: only one is needed.
+The line that matters is \texttt{solver: in use}. A \texttt{solver: any} line
+appears \emph{only} when none is usable, and it fails --- without a WCS there is
+no reference-catalog cross-match, hence no zero point and no calibrated
+magnitude.
+
+The individual checks can also be run by hand:
 \begin{lstlisting}[language=bash]
+python -c "import astropy, ccdproc, astroalign, photutils, astroquery; print('core modules OK')"
 python -c "import cassa_photometry; print(cassa_photometry.__version__)"
 cassa-calibrate --help
 \end{lstlisting}
-\end{enumerate}
-
 \subsection{Pipeline Execution Guide}
 Once installation is complete and verified, you can process data through the console commands installed by the package. Always ensure the Conda environment is active first:
 
 \begin{lstlisting}[language=bash]
-conda activate pipeline_env
-export CASSA_ASTROMETRY_INDEX=/path/to/astrometry_data   # needed by Phase 2
+conda activate cassa-photometry
 \end{lstlisting}
+
+Nothing else needs to be set. The solver's sky data is fetched per field and
+cached; \texttt{CASSA\_ASTROMETRY\_INDEX} or \texttt{CASSA\_ASTAP\_DB} are needed
+only to point at a full local set you manage yourself.
 
 \begin{center}
 \begin{tabularx}{\textwidth}{|l|l|X|}
@@ -529,10 +736,11 @@ cassa-simulate --preset workshop --out sim
 cassa-run -i sim/raw -o sim/work --instrument cassa8
 \end{lstlisting}
 The dataset is distributed as a \emph{seed rather than a download}: the same
-command produces bit-identical frames anywhere. It writes
+command produces bit-identical frames anywhere. It writes three truth files:
 \texttt{truth\_sources.csv} (every source's true magnitude),
-\texttt{truth\_frames.csv} (every frame's true seeing, transparency, airmass and
-zero point) and \texttt{truth\_config.yaml}. The star field is real --- Gaia DR3
+\texttt{truth\_frames.csv} (every frame's true seeing, transparency, airmass
+and zero point), and \texttt{truth\_config.yaml} (the detector and photometric
+model used). The star field is real --- Gaia DR3
 positions with synthetic Johnson-Cousins magnitudes --- so the frames genuinely
 plate-solve and the reference-catalog cross-match genuinely finds the stars.
 
@@ -1473,7 +1681,7 @@ A single-aperture image dances on the detector under atmospheric turbulence (and
 \subsection{Installation}
 The DIMM pipeline shares the same Conda environment as the imaging pipeline (Part II); only the package itself needs to be installed:
 \begin{lstlisting}[language=bash]
-conda activate pipeline_env
+conda activate cassa-photometry
 cd DIMM
 pip install -e . --no-deps --no-build-isolation
 \end{lstlisting}
@@ -1660,7 +1868,7 @@ The \texttt{cassa-camchar} package is the analysis counterpart to the capture pr
 \subsection{Installation}
 Like the other pipelines it shares the Conda environment of Part II:
 \begin{lstlisting}[language=bash]
-conda activate pipeline_env
+conda activate cassa-photometry
 cd camera_characterization
 pip install -e . --no-deps --no-build-isolation
 \end{lstlisting}
@@ -1770,5 +1978,1108 @@ Quantum efficiency and filter transmission are read from the lab CSVs (a monochr
 
 \subsection{Outputs}
 All parameters are persisted to \texttt{characterization\_results.csv} (the per-gain headline table) and \texttt{characterization\_results.json} (the complete nested results, including the dark and spectral metrics and the \texttt{synthetic} tags), alongside the nine-panel dashboard. Every tunable --- the capture grid, the ROI fraction, the sigma-clip level, the PTC linear region, and the wavelength grid --- lives in the central configuration and can be overridden with a YAML file.
+
+
+% =========================================================
+% PART VI: COMPLETE REFERENCE
+% =========================================================
+\clearpage
+\part*{Part VI: Complete Reference}
+\addcontentsline{toc}{part}{Part VI: Complete Reference}
+
+\section{Command Reference}
+Ten console entry points are installed. \texttt{cassa <command>} is an umbrella
+for all of them, so \texttt{cassa calibrate} and \texttt{cassa-calibrate} are the
+same program.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|l|X|}
+\hline
+\textbf{Command} & \textbf{Phase} & \textbf{Reads $\rightarrow$ writes} \\
+\hline
+\texttt{cassa-calibrate} & 1 & raw FITS tree $\rightarrow$ \texttt{work/phase1/calibrated\_*.fits} \\
+\hline
+\texttt{cassa-integrate} & 2 & \texttt{work/phase1} $\rightarrow$ \texttt{work/phase2/Master\_*.fits}, QA PDF \\
+\hline
+\texttt{cassa-photometry} & 3 & \texttt{work/phase2} $\rightarrow$ \texttt{*\_fluxcal.fits}, \texttt{*\_catalog.csv}, \texttt{*\_segmap.fits} \\
+\hline
+\texttt{cassa-diagnose} & 4 & all phases $\rightarrow$ \texttt{diagnostics\_report.pdf}, PNGs, \texttt{metrics.json} \\
+\hline
+\texttt{cassa-run} & 1--3 & raw FITS tree $\rightarrow$ \texttt{phase1}, \texttt{phase2}, \texttt{phase3} \\
+\hline
+\texttt{cassa-verify} & --- & \texttt{*\_catalog.csv} $\rightarrow$ a report on stdout \\
+\hline
+\texttt{cassa-doctor} & --- & this machine $\rightarrow$ a report on stdout \\
+\hline
+\texttt{cassa-index-fetch} & --- & frame headers $\rightarrow$ the astrometry index cache \\
+\hline
+\texttt{cassa-simulate} & --- & a seed $\rightarrow$ a complete simulated run with truth files \\
+\hline
+\texttt{cassa} & --- & dispatches to any of the above \\
+\hline
+\end{tabularx}
+\end{center}
+
+\subsection{Options Common to Every Command}
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\texttt{-c}, \texttt{-{}-config FILE} & YAML file overriding any subset of the defaults. \\
+\hline
+\texttt{-{}-instrument NAME} & Instrument profile. Overrides the config file. \\
+\hline
+\texttt{-{}-version} & Print the version and exit. \\
+\hline
+\texttt{-h}, \texttt{-{}-help} & Print usage and exit. \\
+\hline
+\end{tabularx}
+\end{center}
+
+Phases 1--4 additionally accept the plan controls \texttt{-{}-skip STEP}
+(repeatable), \texttt{-{}-only STEP} (repeatable), and \texttt{-{}-show-plan},
+which prints the resolved step order and exits without reducing anything. A step
+may be named bare (\texttt{-{}-skip flat}) or qualified
+(\texttt{-{}-skip phase1.flat}); the qualified form matters only for
+\texttt{cassa-run}, where two phases both declare \texttt{measure\_fwhm} and an
+ambiguous bare name is an error rather than a guess.
+
+\subsection{\texttt{cassa-calibrate} --- Phase 1}
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\texttt{-i}, \texttt{-{}-input DIR} & \textbf{Required.} Raw FITS directory, searched recursively. The acquisition software's night tree can be given as-is; frames are sorted by \texttt{IMAGETYP}/\texttt{FILTER}/\texttt{EXPTIME}, never by folder name. \\
+\hline
+\texttt{-o}, \texttt{-{}-output DIR} & \textbf{Required.} Directory for calibrated frames. \\
+\hline
+\end{tabularx}
+\end{center}
+
+\subsection{\texttt{cassa-integrate} --- Phase 2}
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\texttt{DATA\_DIR} & \textbf{Required.} Directory of calibrated frames. \\
+\hline
+\texttt{-o}, \texttt{-{}-output DIR} & Output directory. Default: the \texttt{phase2} directory beside the input. \\
+\hline
+\texttt{-{}-keep-temps} & Keep the solver's temporary files. \\
+\hline
+\texttt{-y}, \texttt{-{}-yes} & Skip the interactive confirmation of the resource estimate. \\
+\hline
+\texttt{-{}-raw-dir DIR} & Raw tree for the QA PDF's raw panel. Only needed when the raws have moved since Phase 1 stamped \texttt{RAWDIR}. \\
+\hline
+\end{tabularx}
+\end{center}
+
+\subsection{\texttt{cassa-photometry} --- Phase 3}
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\texttt{INPUT\_PATH} & \textbf{Required.} A master FITS file or a directory of them. \\
+\hline
+\texttt{-{}-filter BAND} & Fallback science band (R/G/B/V/I) when the header cannot say. Default \texttt{R}. \\
+\hline
+\texttt{-{}-fwhm PX} & FWHM estimate in pixels. A \emph{fallback only} --- apertures are sized from the measured \texttt{FWHMPX}. \\
+\hline
+\texttt{-{}-threshold SIGMA} & Detection threshold in sigma. Default 5. \\
+\hline
+\texttt{-{}-outdir DIR} & Output directory. Default: alongside the inputs. \\
+\hline
+\texttt{-{}-offline} & Never query reference catalogs; use the local cache only. \\
+\hline
+\texttt{-{}-targets FILE} & A \texttt{targets.yaml}. Frames carrying \texttt{TARGNAME}/\texttt{OBJTYPE} need no file. \\
+\hline
+\end{tabularx}
+\end{center}
+
+\subsection{\texttt{cassa-verify}}
+\texttt{INPUT\_PATH} is a \texttt{\_catalog.csv} or a directory of them;
+\texttt{-{}-filter BAND} sets the fallback reference-catalog column (default
+\texttt{rmag}).
+
+\subsection{\texttt{cassa-diagnose} --- Phase 4}
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\texttt{RUN\_DIR} & A Phase 2 run directory. Everything else is auto-discovered from the sibling phase directories and paired by filter. \\
+\hline
+\texttt{-{}-raw PATH} & Raw frame, or a raw directory searched recursively (stage 0). \\
+\hline
+\texttt{-{}-calibrated PATH} & A \texttt{calibrated\_*.fits} frame (stage 1). \\
+\hline
+\texttt{-{}-master PATH} & A \texttt{Master\_*.fits} stack (stage 2). \\
+\hline
+\texttt{-{}-catalog PATH} & A \texttt{*\_catalog.csv} (stage 3). \\
+\hline
+\texttt{-{}-fluxcal PATH} & A \texttt{*\_fluxcal.fits}, for the zero-point header. \\
+\hline
+\texttt{-{}-outdir DIR} & Where the report goes. \\
+\hline
+\end{tabularx}
+\end{center}
+
+\subsection{\texttt{cassa-run} --- Phases 1 $\rightarrow$ 2 $\rightarrow$ 3}
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\texttt{-i}, \texttt{-{}-input DIR} & \textbf{Required.} Raw FITS directory. \\
+\hline
+\texttt{-o}, \texttt{-{}-output DIR} & \textbf{Required.} Work directory; phases write to \texttt{<output>/phase1}, \texttt{phase2}, \texttt{phase3}. \\
+\hline
+\texttt{-{}-from \{1,2,3\}} & First phase to run. Default 1. Resumes a run whose later phases failed, without recalibrating. \\
+\hline
+\texttt{-{}-to \{1,2,3\}} & Last phase to run. Default 3. \\
+\hline
+\texttt{-{}-filter BAND} & Fallback science band for Phase 3. \\
+\hline
+\texttt{-{}-targets FILE} & A \texttt{targets.yaml} for Phase 3. \\
+\hline
+\texttt{-{}-keep-temps} & Keep the solver's temporary files. \\
+\hline
+\end{tabularx}
+\end{center}
+
+Phase 4 is deliberately not chained: it is a report on a finished run, not a
+reduction step.
+
+\subsection{\texttt{cassa-index-fetch}}
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\texttt{-{}-from-headers DIR} & Read pointing and scale from every FITS frame in a directory and fetch the union of what they need. \\
+\hline
+\texttt{-{}-ra}, \texttt{-{}-dec}, \texttt{-{}-scale}, \texttt{-{}-size} & Describe one field by hand instead. \\
+\hline
+\texttt{-{}-dry-run} & List the files and the total size without downloading. \\
+\hline
+\texttt{-{}-wide} & Include the finest (largest) indexes, which the pipeline otherwise fetches only if a first solve fails. \\
+\hline
+\end{tabularx}
+\end{center}
+
+This command serves the Astrometry.net backend. ASTAP needs no equivalent: its
+tiles are about 6\,MB per field and are fetched during the solve.
+
+\subsection{\texttt{cassa-simulate}}
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\texttt{-{}-preset \{workshop,tiny,multinight\}} & Which dataset. Default \texttt{workshop}. \\
+\hline
+\texttt{-o}, \texttt{-{}-out DIR} & Output directory. Default \texttt{./sim}. \\
+\hline
+\texttt{-{}-seed N} & RNG seed. The dataset is reproducible from it. \\
+\hline
+\end{tabularx}
+\end{center}
+
+It writes \texttt{raw/} plus \texttt{truth\_sources.csv},
+\texttt{truth\_frames.csv} and \texttt{truth\_config.yaml}, so every measurement
+can be \emph{scored} rather than only inspected.
+
+\subsection{\texttt{cassa-doctor}}
+\texttt{-{}-no-network} skips the reachability checks. The exit status is
+\texttt{1} if any check failed and \texttt{0} otherwise.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\textbf{Check} & \textbf{What it establishes} \\
+\hline
+\texttt{platform} & Linux or macOS. Native Windows fails here, pointing at WSL. \\
+\hline
+\texttt{python} & Interpreter version against the floor in \texttt{pyproject.toml}. \\
+\hline
+\texttt{cassa-photometry} & The pipeline's version, whether it is editable, and where it lives. \\
+\hline
+\texttt{dependencies} & Every declared runtime requirement, against its minimum. \\
+\hline
+\texttt{solver: astap} & Whether the ASTAP binary is on \texttt{PATH} or at \texttt{phase2.astap\_path}. \\
+\hline
+\texttt{solver: solve-field} & Whether the Astrometry.net binary is available, and its version. \\
+\hline
+\texttt{solver: in-process} & Whether the importable \texttt{astrometry} is the PyPI solver rather than the conda bindings --- they share a name, and only one can solve. \\
+\hline
+\texttt{solver: any} & Appears \emph{only} when none is usable, and fails. \\
+\hline
+\texttt{solver: in use} & Which backend a run would actually pick. \\
+\hline
+\texttt{astrometry indexes} & Whether a full local set is configured, or the cache will be used. \\
+\hline
+\texttt{index manifest} & Whether the shipped index catalogue is readable. \\
+\hline
+\texttt{index selection} & Whether the native HEALPix bindings give exact tile selection. \\
+\hline
+\texttt{index cache} & How much is cached, and where. \\
+\hline
+\texttt{astap database} & How many ASTAP star tiles are cached. Empty is fine. \\
+\hline
+\texttt{network: \ldots} & Reachability of the index server and VizieR. A \emph{warning}, never a failure: the pipeline is expected to work offline from its caches. \\
+\hline
+\texttt{work directory} & That the working directory can be written to. \\
+\hline
+\end{tabularx}
+\end{center}
+
+\section{Configuration Reference}
+Every key below is valid in a YAML file passed with \texttt{-c}. Any subset may
+be given; anything omitted keeps its default. A wrong type or a mistyped name is
+reported against its full dotted path when the config is read, rather than being
+silently ignored.
+
+\subsection{Top Level}
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|l|X|}
+\hline
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
+\hline
+\texttt{instrument} & \texttt{generic} & Instrument profile name. \texttt{-{}-instrument} overrides it. \\
+\hline
+\texttt{instrument\_module} & \texttt{null} & A profile class in a local file, as \texttt{path.py:MyProfile}. Takes precedence over \texttt{instrument}. \\
+\hline
+\texttt{detector} & empty & Detector constants for a setup with no profile. \\
+\hline
+\texttt{targets\_file} & \texttt{null} & A \texttt{targets.yaml} describing what is being observed. \\
+\hline
+\texttt{log\_level} & \texttt{INFO} & \texttt{DEBUG}, \texttt{INFO}, \texttt{WARNING}, \texttt{ERROR}. \\
+\hline
+\end{tabularx}
+\end{center}
+
+\subsection{\texttt{detector:} --- a Setup Without a Profile}
+Values fill in \emph{where the header is silent}, preserving the order of
+authority: header, then this block, then the profile, then the configured
+fallbacks.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|l|X|}
+\hline
+\texttt{gain} & \texttt{null} & e-/ADU. \\
+\hline
+\texttt{read\_noise} & \texttt{null} & Electrons. \\
+\hline
+\texttt{saturation\_adu} & \texttt{null} & Raw ADU at which pixels clip. \\
+\hline
+\texttt{pixel\_scale\_arcsec} & \texttt{null} & Unbinned arcsec/pixel. \\
+\hline
+\texttt{filter\_map} & \texttt{\{\}} & Extra raw-filter $\rightarrow$ stacking-label entries. \\
+\hline
+\texttt{science\_bands} & \texttt{\{\}} & Extra raw-filter $\rightarrow$ science-band entries. \\
+\hline
+\texttt{uncalibrated\_filters} & \texttt{[]} & Filters to exclude from photometric calibration entirely. \\
+\hline
+\texttt{flat\_proxies} & \texttt{\{\}} & filter $\rightarrow$ stand-in filter, for a setup that reuses one flat for another. \\
+\hline
+\texttt{override\_header} & \texttt{false} & Let these values beat the frame header. Logged loudly each time a card is discarded. \\
+\hline
+\end{tabularx}
+\end{center}
+
+\subsection{\texttt{phase1:} --- Instrument Signature Removal}
+\begin{center}
+\begin{longtable}{|p{4.6cm}|p{1.9cm}|p{8.0cm}|}
+\hline
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
+\hline
+\endhead
+\texttt{steps} & all on & See the step registry below. \\
+\hline
+\texttt{master\_sigma\_clip} & \texttt{3.0} & Sigma clip when combining calibration frames. \texttt{0} disables rejection. \\
+\hline
+\texttt{apply\_linearity} & \texttt{true} & Correct non-linearity in raw ADU; acts only when the profile supplies a curve. \emph{Deprecated duplicate of} \texttt{steps.linearity}. \\
+\hline
+\texttt{calibration\_temp\_tolerance\_c} & \texttt{3.0} & How far a calibration frame's sensor temperature may differ from the science frames' before it is reported. \\
+\hline
+\texttt{cr\_sigclip} & \texttt{4.5} & \texttt{astroscrappy} Laplacian threshold. \\
+\hline
+\texttt{cr\_sigfrac} & \texttt{0.3} & Fractional threshold for neighbouring pixels. \\
+\hline
+\texttt{cr\_objlim} & \texttt{5.0} & Contrast limit between the Laplacian and the fine-structure image. \\
+\hline
+\texttt{cr\_max\_fraction} & \texttt{0.01} & Largest share of a frame the cosmic-ray mask may claim before it is discarded as implausible. \texttt{1.0} accepts any mask. \\
+\hline
+\texttt{saturation\_adu} & \texttt{50000} & Fallback saturation in raw ADU; a profile that knows its detector overrides it. \\
+\hline
+\texttt{fallback\_gain} & \texttt{1.0} & Last-resort e-/ADU, used only when neither header nor profile can say. Warned about, by frame. \\
+\hline
+\texttt{fallback\_read\_noise} & \texttt{10.0} & Last-resort read noise, same conditions. \\
+\hline
+\texttt{allow\_precalibrated} & \texttt{false} & Reduce frames reporting prior calibration (non-empty \texttt{CALSTAT}, or data already in electrons). \\
+\hline
+\texttt{bpm\_flat\_low} & \texttt{0.5} & Flat sensitivity floor, as a fraction of the flat's own \emph{local} level. \\
+\hline
+\texttt{bpm\_flat\_high} & \texttt{1.5} & Flat sensitivity ceiling, same basis. \\
+\hline
+\texttt{bpm\_flat\_smooth\_px} & \texttt{51} & Box size of the median smoothing that defines ``local''. \texttt{0} thresholds against the normalised flat directly. \\
+\hline
+\texttt{bpm\_dark\_rate\_factor} & \texttt{20.0} & Hot if the dark current exceeds this multiple of the median dark rate\ldots \\
+\hline
+\texttt{bpm\_dark\_sigma} & \texttt{5.0} & \ldots or this many robust sigmas above it, whichever cut is higher. \\
+\hline
+\texttt{bpm\_bias\_noise\_factor} & \texttt{5.0} & Unstable if bias scatter exceeds this multiple of the median scatter\ldots \\
+\hline
+\texttt{bpm\_bias\_noise\_sigma} & \texttt{5.0} & \ldots or this many robust sigmas above it, whichever is higher. \\
+\hline
+\end{longtable}
+\end{center}
+
+Setting any \texttt{*\_factor} to \texttt{0} disables that test; a master that is
+absent is simply skipped.
+
+\subsection{\texttt{phase2:} --- Registration, Stacking, Astrometry}
+\begin{center}
+\begin{longtable}{|p{4.6cm}|p{1.9cm}|p{8.0cm}|}
+\hline
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
+\hline
+\endhead
+\texttt{steps} & all on & See the step registry below. \\
+\hline
+\texttt{align\_detection\_sigma} & \texttt{1.5} & Source-detection threshold for \texttt{astroalign}. \\
+\hline
+\texttt{align\_min\_area} & \texttt{4} & Minimum connected pixels for an alignment source. \\
+\hline
+\texttt{scale\_min} / \texttt{scale\_max} & \texttt{0.65} / \texttt{1.5} & Accepted frame-to-frame flux-scale range; outside it the frame is rejected. \\
+\hline
+\texttt{background\_box} & \texttt{(50,50)} & 2D background estimator box, in pixels. \\
+\hline
+\texttt{background\_filter} & \texttt{(3,3)} & Median filter applied to the background mesh. \\
+\hline
+\texttt{subtract\_background} & \texttt{true} & Subtract a 2D background before stacking. \emph{Deprecated duplicate of} \texttt{steps.subtract\_background}. \\
+\hline
+\texttt{stack\_sigma} & \texttt{3.0} & Sigma clip when combining. \\
+\hline
+\texttt{stack\_maxiters} & \texttt{3} & Sigma-clip iterations. \\
+\hline
+\texttt{sigma\_clip\_min\_frames} & \texttt{5} & Below this frame count nothing is rejected --- too little information to identify an outlier. \\
+\hline
+\texttt{min\_frames\_to\_stack} & \texttt{3} & Fewest aligned frames worth stacking at all. \\
+\hline
+\texttt{mask\_bad\_pixels} & \texttt{true} & Exclude Phase 1's flagged pixels from the combine. \\
+\hline
+\texttt{stack\_weight} & \texttt{point\_source} & $1/(\sigma\,\mathrm{FWHM})^2$, optimal for stars; \texttt{extended} uses $1/\sigma^2$. \\
+\hline
+\texttt{anchor\_sharpness\_power} & \texttt{1.0} & Anchor ranking is SNR / FWHM$^{\text{power}}$. \texttt{0} ranks on SNR alone. \\
+\hline
+\texttt{fwhm\_reject\_factor} & \texttt{1.6} & Reject frames softer than this multiple of the group median. \texttt{0} keeps every frame. \\
+\hline
+\texttt{scale\_aperture\_factor} & \texttt{3.0} & Aperture for the flux-scale measurement, in units of the worse FWHM. Generous on purpose: a small aperture reads seeing as transparency. \\
+\hline
+\texttt{scale\_aperture\_fwhm\_default} & \texttt{4.5} & Fallback FWHM when neither frame reports one. \\
+\hline
+\texttt{warp\_order} & \texttt{3} & Spline order for the geometric warp. \\
+\hline
+\texttt{epoch\_bin} & \texttt{night} & \texttt{none}, \texttt{night} (binned on \emph{local noon}), or a duration such as \texttt{"6h"}. \\
+\hline
+\texttt{raw\_dir} & \texttt{null} & Raw tree for the QA PDF. Normally unset --- Phase 1 stamps \texttt{RAWDIR}. \\
+\hline
+\texttt{solver} & \texttt{auto} & \texttt{auto}, \texttt{astap}, \texttt{solve-field}, \texttt{astrometry-py}. \\
+\hline
+\texttt{astap\_path} & \texttt{null} & Path to the ASTAP executable. \texttt{null} looks for \texttt{astap\_cli}, then \texttt{astap}, on \texttt{PATH}. \\
+\hline
+\texttt{astap\_db\_dir} & \texttt{null} & \texttt{null} $\rightarrow$ \texttt{CASSA\_ASTAP\_DB}, then the cache. \\
+\hline
+\texttt{astap\_db\_series} & \texttt{auto} & \texttt{auto} picks from the frame's own field height; or \texttt{d50}, \texttt{d05}, \texttt{g05}. \\
+\hline
+\texttt{astap\_db\_url} & SourceForge & Where the published archives live. \\
+\hline
+\texttt{astap\_db\_download} & \texttt{true} & \texttt{false} selects but never fetches, and reports what is missing. \\
+\hline
+\texttt{astap\_tile\_neighbours} & \texttt{1} & Tiles either side of the field centre; \texttt{1} covers a field on a tile edge. \\
+\hline
+\texttt{astrometry\_index\_dir} & \texttt{null} & A full local index set. \texttt{null} $\rightarrow$ \texttt{CASSA\_ASTROMETRY\_INDEX}, then \texttt{./astrometry\_data}. Wins over the cache. \\
+\hline
+\texttt{index\_url} & data.astrometry.net & Base URL of the index series. \\
+\hline
+\texttt{index\_token} & \texttt{null} & Bearer token, for a private mirror. \\
+\hline
+\texttt{index\_cache\_dir} & \texttt{null} & \texttt{null} $\rightarrow$ \texttt{CASSA\_INDEX\_CACHE}, then the cache. \\
+\hline
+\texttt{index\_cache\_gb} & \texttt{20.0} & Cache size budget. \\
+\hline
+\texttt{index\_search\_radius\_deg} & \texttt{3.0} & Search cone when selecting index tiles. \\
+\hline
+\texttt{index\_blind\_radius\_deg} & \texttt{15.0} & The wider cone used by the fallback pass. \\
+\hline
+\texttt{index\_scale\_lo\_frac} & \texttt{0.30} & Quad-scale floor, as a fraction of the field size. The finest indexes are by far the largest files and rarely what solves a frame. \\
+\hline
+\texttt{index\_scale\_lo\_frac\_wide} & \texttt{0.10} & The widened fallback pass drops to the full 10\%. \\
+\hline
+\texttt{index\_scale\_hi\_frac} & \texttt{1.00} & Quad-scale ceiling. \\
+\hline
+\texttt{index\_download} & \texttt{true} & \texttt{false} still selects, and names the command that would fetch each missing file. \\
+\hline
+\texttt{solve\_scale\_tolerance} & \texttt{0.25} & Half-width of the pixel-scale window handed to the solver. Generous on purpose: a wrong stated scale makes a solve \emph{fail}, where no scale only makes it slow. \\
+\hline
+\texttt{solve\_scale\_tolerance\_wide} & \texttt{1.0} & The fallback pass's window. \\
+\hline
+\texttt{solve\_scale\_warn\_frac} & \texttt{0.05} & Warn when the solved plate scale disagrees with the header's claim by more than this. \\
+\hline
+\texttt{solve\_timeout\_s} & \texttt{120} & First-pass solve timeout, seconds. \\
+\hline
+\texttt{solve\_timeout\_wide\_s} & \texttt{600} & Fallback-pass timeout. \\
+\hline
+\end{longtable}
+\end{center}
+
+\subsection{\texttt{phase3:} --- Photometry, Zero Point, Catalogs}
+\begin{center}
+\begin{longtable}{|p{4.6cm}|p{1.9cm}|p{8.0cm}|}
+\hline
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
+\hline
+\endhead
+\texttt{steps} & all on & See the step registry below. \\
+\hline
+\texttt{fwhm} & \texttt{3.5} & \textbf{Fallback only.} Apertures are sized from the measured \texttt{FWHMPX}; a fixed aperture whatever the seeing is worth up to 0.3\,mag of per-epoch zero-point error. \\
+\hline
+\texttt{detection\_threshold} & \texttt{5.0} & Detection threshold in sigma. \\
+\hline
+\texttt{detect\_npixels} & \texttt{5} & Minimum connected pixels above threshold. \\
+\hline
+\texttt{deblend\_nlevels} & \texttt{32} & Deblending levels. \\
+\hline
+\texttt{deblend\_contrast} & \texttt{0.001} & Deblending contrast ratio. \\
+\hline
+\texttt{aperture\_r\_factor} & \texttt{2.0} & Aperture radius, in units of the measured FWHM. \\
+\hline
+\texttt{annulus\_in\_factor} & \texttt{5.0} & Background annulus inner radius, in FWHM. Must sit outside the PSF wings --- at 3--4$\times$ FWHM a Moffat still puts $\sim$1.25\% of the star's light in the annulus. \\
+\hline
+\texttt{annulus\_out\_factor} & \texttt{8.0} & Annulus outer radius, in FWHM. \\
+\hline
+\texttt{zp\_sigma\_clip} & \texttt{3.0} & Sigma clip applied to the per-star zero points. \\
+\hline
+\texttt{zp\_match\_tol\_arcsec} & \texttt{2.0} & Fixed cross-match radius, used when the WCS carries no \texttt{ASTRMS}. \\
+\hline
+\texttt{match\_radius\_sigma} & \texttt{3.0} & Cross-match radius $=$ this $\times$ \texttt{ASTRMS}\ldots \\
+\hline
+\texttt{match\_radius\_min\_arcsec} & \texttt{1.0} & \ldots clamped to this floor. Reference positions carry their own error and stars have moved since the catalog epoch. \\
+\hline
+\texttt{match\_radius\_max\_arcsec} & \texttt{5.0} & \ldots and this cap. \\
+\hline
+\texttt{zp\_reject\_flagged} & \texttt{true} & Reject calibrators with a saturated/bad/cosmic-ray pixel in the aperture. The brightest catalog stars saturate first and are exactly the ones inverse-variance weighting trusts most. \\
+\hline
+\texttt{psf\_photometry} & \texttt{true} & PSF-fitted photometry. \emph{Deprecated duplicate of} \texttt{steps.psf\_photometry}. \\
+\hline
+\texttt{aperture\_correction} & \texttt{true} & Measure an aperture correction from a curve of growth, making the zero point a \emph{total-flux} zero point. \emph{Deprecated duplicate.} \\
+\hline
+\texttt{apcor\_total\_factor} & \texttt{5.0} & Radius treated as ``total'' in the curve of growth, in FWHM. \\
+\hline
+\texttt{ellipticity\_star\_max} & \texttt{0.15} & Objects rounder than this are treated as stars by \texttt{cassa-verify}. \\
+\hline
+\texttt{ab\_flux\_zero\_jy} & \texttt{3631.0} & Zero-flux of the AB system, in Jy. \\
+\hline
+\texttt{apply\_ab\_offset} & \texttt{true} & Apply the band's AB$-$Vega offset in the Jy conversion. Without it, B fluxes are $\sim$8\% wrong. \\
+\hline
+\texttt{keep\_negative\_flux} & \texttt{true} & Keep non-detections with a limiting magnitude, rather than dropping them and biasing faint number counts. \\
+\hline
+\texttt{catalog\_cache} & \texttt{true} & Persist every successful reference-catalog query. \\
+\hline
+\texttt{catalog\_cache\_dir} & \texttt{null} & \texttt{null} $\rightarrow$ \texttt{CASSA\_CATALOG\_CACHE}, then the cache. \\
+\hline
+\texttt{catalog\_cache\_days} & \texttt{180} & Refresh a cached query older than this. \texttt{0} keeps it forever. \\
+\hline
+\texttt{offline} & \texttt{false} & Never touch the network; use the cache only, and fail clearly when a field is not in it. \\
+\hline
+\end{longtable}
+\end{center}
+
+\subsection{\texttt{phase4:} --- Diagnostics}
+Phase 4 measures rather than decides, so these only steer what it looks at.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|l|X|}
+\hline
+\texttt{steps} & all on & See the step registry below. \\
+\hline
+\texttt{fwhm\_guess} & \texttt{3.5} & Starting FWHM for star detection. Shared with the FWHM measurement Phases 1--2 depend on. \\
+\hline
+\texttt{detection\_threshold} & \texttt{5.0} & Detection threshold in sigma. \\
+\hline
+\texttt{max\_stars} & \texttt{25} & Stars fitted when estimating the PSF. \\
+\hline
+\texttt{cutout} & \texttt{15} & Cutout size in pixels for each fitted star. \\
+\hline
+\texttt{near\_saturation\_frac} & \texttt{0.95} & A pixel within this fraction of the frame maximum counts as near-saturated. Deliberately independent of the DQ \texttt{SATURATED} bit, so the two can be compared. \\
+\hline
+\texttt{limiting\_snr} & \texttt{5.0} & SNR defining the limiting magnitude. \\
+\hline
+\texttt{mag\_binsize} & \texttt{0.5} & Magnitude bin width for number counts. \\
+\hline
+\texttt{hist\_bins} & \texttt{30} & Histogram bins. \\
+\hline
+\end{tabularx}
+\end{center}
+
+\section{Environment Variables}
+Resolution order is always \textbf{config value $\rightarrow$ environment
+variable $\rightarrow$ default}, so a config file wins over the environment.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\texttt{CASSA\_ASTROMETRY\_INDEX} & A full local Astrometry.net index set. Wins over the on-demand cache; nothing is downloaded. \\
+\hline
+\texttt{CASSA\_INDEX\_CACHE} & Where on-demand index files are cached. Default \texttt{\textasciitilde/.cache/}\allowbreak\texttt{cassa-photometry/}\allowbreak\texttt{astrometry}. \\
+\hline
+\texttt{CASSA\_INDEX\_TOKEN} & Bearer token for a private index mirror. \\
+\hline
+\texttt{CASSA\_ASTAP\_DB} & Where ASTAP star tiles live. Default \texttt{\textasciitilde/.cache/}\allowbreak\texttt{cassa-photometry/}\allowbreak\texttt{astap}. \\
+\hline
+\texttt{CASSA\_CATALOG\_CACHE} & Where reference-catalog queries are cached. Default \texttt{\textasciitilde/.cache/}\allowbreak\texttt{cassa-photometry/}\allowbreak\texttt{catalogs}. \\
+\hline
+\texttt{XDG\_CACHE\_HOME} & Relocates all three caches at once, in the usual way. \\
+\hline
+\end{tabularx}
+\end{center}
+
+\section{Step Registry Reference}
+Every phase declares its steps with dependency tokens. A step may be excluded
+freely; it may be reordered anywhere its \texttt{requires} are still satisfied by
+an earlier \texttt{provides}. An order that breaks a real dependency is
+\textbf{refused when the config is read}, naming the violation. \emph{Movable:
+no} marks a step nested inside another, with no seam to move it to.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|X|c|}
+\hline
+\multicolumn{4}{|l|}{\textbf{Phase 1 --- instrument signature removal}} \\
+\hline
+\textbf{Step} & \textbf{Requires} & \textbf{Provides} & \textbf{Movable} \\
+\hline
+\texttt{linearity} & --- & \texttt{linearised} & yes \\
+\hline
+\texttt{overscan} & \texttt{linearised} & \texttt{trimmed} & yes \\
+\hline
+\texttt{bad\_pixel\_mask} & --- & \texttt{bpm} & yes \\
+\hline
+\texttt{bias} & \texttt{trimmed} & \texttt{bias\_subtracted} & yes \\
+\hline
+\texttt{dark} & \texttt{bias\_subtracted} & \texttt{dark\_subtracted} & yes \\
+\hline
+\texttt{flat} & \texttt{dark\_subtracted} & \texttt{flat\_fielded} & yes \\
+\hline
+\texttt{cosmic\_rays} & \texttt{trimmed}, \texttt{bpm} & \texttt{cr\_cleaned} & yes \\
+\hline
+\texttt{measure\_fwhm} & \texttt{flat\_fielded} & \texttt{frame\_fwhm} & yes \\
+\hline
+\end{tabularx}
+\end{center}
+
+Cosmic-ray rejection before or after flat fielding is a genuine choice and is
+permitted; flat before bias is not.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|X|c|}
+\hline
+\multicolumn{4}{|l|}{\textbf{Phase 2 --- integration}} \\
+\hline
+\textbf{Step} & \textbf{Requires} & \textbf{Provides} & \textbf{Movable} \\
+\hline
+\texttt{subtract\_background} & --- & \texttt{background\_removed} & yes \\
+\hline
+\texttt{align} & --- & \texttt{registered} & yes \\
+\hline
+\texttt{stack} & \texttt{registered}, \texttt{background\_removed} & \texttt{stacked} & yes \\
+\hline
+\texttt{solve\_wcs} & \texttt{stacked} & \texttt{wcs} & yes \\
+\hline
+\texttt{measure\_fwhm} & \texttt{stacked} & \texttt{master\_fwhm} & \textbf{no} \\
+\hline
+\texttt{visual\_qa} & \texttt{stacked}, \texttt{wcs} & \texttt{qa\_pdf} & yes \\
+\hline
+\end{tabularx}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|X|c|}
+\hline
+\multicolumn{4}{|l|}{\textbf{Phase 3 --- photometry}} \\
+\hline
+\textbf{Step} & \textbf{Requires} & \textbf{Provides} & \textbf{Movable} \\
+\hline
+\texttt{aperture\_correction} & --- & \texttt{apcor} & \textbf{no} \\
+\hline
+\texttt{zero\_point} & --- & \texttt{zero\_point} & yes \\
+\hline
+\texttt{flux\_calibration} & \texttt{zero\_point} & \texttt{fluxcal} & yes \\
+\hline
+\texttt{catalog} & --- & \texttt{catalog} & yes \\
+\hline
+\texttt{psf\_photometry} & \texttt{catalog} & \texttt{psf\_mag} & \textbf{no} \\
+\hline
+\texttt{classification} & \texttt{catalog}, \texttt{psf\_mag} & \texttt{classes} & \textbf{no} \\
+\hline
+\end{tabularx}
+\end{center}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|l|X|X|c|}
+\hline
+\multicolumn{4}{|l|}{\textbf{Phase 4 --- diagnostics}} \\
+\hline
+\textbf{Step} & \textbf{Requires} & \textbf{Provides} & \textbf{Movable} \\
+\hline
+\texttt{stage\_0\_raw} & --- & \texttt{stage\_0} & yes \\
+\hline
+\texttt{stage\_1\_calibrated} & --- & \texttt{stage\_1} & yes \\
+\hline
+\texttt{stage\_2\_master} & --- & \texttt{stage\_2} & yes \\
+\hline
+\texttt{stage\_3\_photometry} & --- & \texttt{stage\_3} & yes \\
+\hline
+\end{tabularx}
+\end{center}
+
+The four diagnostic stages are independent, so any subset in any order is valid.
+
+\section{FITS Keyword Reference}
+
+\subsection{Read from Raw Frames}
+The header is always the first authority; an instrument profile supplies only
+what the header cannot say.
+
+\begin{center}
+\begin{longtable}{|p{4.4cm}|p{10.1cm}|}
+\hline
+\textbf{Keyword} & \textbf{Used for} \\
+\hline
+\endhead
+\texttt{IMAGETYP} & Frame classification (bias / dark / flat / science). Folder names are documentation, not classification. \\
+\hline
+\texttt{FILTER} & Filter identity, mapped to a stacking label and a science band. \\
+\hline
+\texttt{EXPTIME}, \texttt{EXPOSURE} & Exposure time, for dark matching and flux normalisation. \\
+\hline
+\texttt{EGAIN}, \texttt{GAIN} & System gain in e-/ADU. On CMOS, \texttt{GAIN} is often the unitless \emph{setting} --- write \texttt{EGAIN}. \\
+\hline
+\texttt{READNOIS} & Read noise in electrons. \\
+\hline
+\texttt{READOUTM} & Readout mode (\texttt{HCG}/\texttt{LCG}). Without it, the mode is inferred from the gain setting. \\
+\hline
+\texttt{SATURATE}, \texttt{SATLEVEL}, \texttt{FULLWELL} & Saturation level in raw ADU. \\
+\hline
+\texttt{XBINNING}, \texttt{YBINNING} & Binning. A mismatch against the masters is a hard skip. \\
+\hline
+\texttt{XPIXSZ}, \texttt{YPIXSZ}, \texttt{FOCALLEN} & Plate scale, when \texttt{SECPIX}/\texttt{PIXSCALE} are absent. \\
+\hline
+\texttt{SECPIX}, \texttt{PIXSCALE} & Stated plate scale: a solver hint, and checked against the solution. \\
+\hline
+\texttt{OBJCTRA}, \texttt{OBJCTDEC}, \texttt{TARGRA}, \texttt{TARGDEC} & Pointing, for the solver hint and the sky-data selection. \\
+\hline
+\texttt{DATE-OBS}, \texttt{MJD-OBS}, \texttt{TIMESYS} & Epoch binning. \\
+\hline
+\texttt{SITELAT}, \texttt{SITELONG} & Local-noon epoch binning, and airmass. \\
+\hline
+\texttt{CCD-TEMP}, \texttt{SET-TEMP} & Calibration temperature matching. \\
+\hline
+\texttt{OBJECT}, \texttt{TARGNAME}, \texttt{OBJTYPE} & What is being observed, and therefore how it is measured. \\
+\hline
+\texttt{INSTRUME}, \texttt{TELESCOP} & Carried through the reduction. \\
+\hline
+\texttt{CALSTAT} & Non-empty means the frame reports prior calibration; it is skipped unless \texttt{allow\_precalibrated}. \\
+\hline
+\texttt{AIRMASS}, \texttt{GUIDERMS} & Carried through and reported. \\
+\hline
+\end{longtable}
+\end{center}
+
+\subsection{Written by Phase 1}
+\begin{center}
+\begin{longtable}{|p{3.3cm}|p{11.2cm}|}
+\hline
+\textbf{Keyword} & \textbf{Meaning} \\
+\hline
+\endhead
+\texttt{CALVERS} & Calibration vintage (currently 2). Bumped whenever a change makes new output numerically incomparable with old, so mixed vintages are detectable rather than silently averaged. \\
+\hline
+\texttt{CALPLAN} & The steps that ran, in the order they ran. \\
+\hline
+\texttt{CALSKIP} & The steps that did not run. A partially-reduced frame says so. \\
+\hline
+\texttt{BUNIT} & \texttt{electron} after gain correction. \\
+\hline
+\texttt{GAINVAL} & The gain actually used, whatever supplied it. \\
+\hline
+\texttt{BIASSUB} & Whether the master dark had its bias pedestal removed. \\
+\hline
+\texttt{CRVETO} & Set when a cosmic-ray mask was discarded as implausible. \\
+\hline
+\texttt{FWHMPX}, \texttt{FWHMASEC} & Measured FWHM in pixels and arcsec. Phase 3 sizes apertures from this. \\
+\hline
+\texttt{FWHMNSTR}, \texttt{FWHMELL} & Stars fitted, and the fitted ellipticity. \\
+\hline
+\texttt{RAWDIR}, \texttt{RAWFILE} & Where the frame came from, so the raw tree is findable later. \\
+\hline
+\texttt{NCOMBINE}, \texttt{NREJECT} & Frames combined into a master, and pixels rejected. \\
+\hline
+\texttt{EXPNORM} & Exposure normalisation applied. \\
+\hline
+\end{longtable}
+\end{center}
+
+\subsection{Written by Phase 2}
+\begin{center}
+\begin{longtable}{|p{3.3cm}|p{11.2cm}|}
+\hline
+\textbf{Keyword} & \textbf{Meaning} \\
+\hline
+\endhead
+\texttt{STACKCNT} & Frames in the stack. \\
+\hline
+\texttt{TOT\_EXP} & Total integrated exposure. \\
+\hline
+\texttt{EXPMEAN} & Mean per-frame exposure. \\
+\hline
+\texttt{EPOCHKEY} & The epoch bin this master belongs to. \\
+\hline
+\texttt{BKGLEVEL}, \texttt{BKGND} & The background level removed before stacking. \\
+\hline
+\texttt{PIXSCALE} & Plate scale of the stack. \\
+\hline
+\texttt{STEPPLAN}, \texttt{STEPSKIP} & The resolved step plan, and what was skipped. \\
+\hline
+\texttt{WCSFROM} & Where the WCS came from. \\
+\hline
+\texttt{WCSSOLVR} & Which backend solved it: \texttt{astap}, \texttt{solve-field} or \texttt{astrometry-py}. \\
+\hline
+\texttt{ASTRMS} & Total astrometric RMS residual, in arcsec. \\
+\hline
+\texttt{CRDER1}, \texttt{CRDER2} & FITS-standard random error per axis, in degrees. \\
+\hline
+\texttt{ASTNSTAR} & Stars matched in the residual measurement. \\
+\hline
+\texttt{ASTRMSRC} & Which route produced \texttt{ASTRMS}: the solver's own matched-star table, or the reference catalog. This is what makes the backends equivalent. \\
+\hline
+\texttt{CTYPE1/2}, \texttt{CUNIT1/2}, \texttt{CRPIX1/2}, \texttt{CRVAL1/2}, \texttt{CD*\_*} & The WCS itself. \\
+\hline
+\end{longtable}
+\end{center}
+
+\subsection{Written by Phase 3}
+\begin{center}
+\begin{longtable}{|p{3.3cm}|p{11.2cm}|}
+\hline
+\textbf{Keyword} & \textbf{Meaning} \\
+\hline
+\endhead
+\texttt{MAGZERO} & Filter-wise zero point. \\
+\hline
+\texttt{MAGZERR} & Its uncertainty. \\
+\hline
+\texttt{NZPSTARS} & Calibrator stars that survived clipping and flag rejection. \\
+\hline
+\texttt{PHOTREF} & Which reference catalog supplied them. \\
+\hline
+\texttt{PHOTSYS} & \texttt{Vega} or \texttt{AB} for this band. \\
+\hline
+\texttt{PHOTWAVE} & Effective wavelength, in nm. \\
+\hline
+\texttt{ABOFFSET} & The AB$-$Vega offset applied. \\
+\hline
+\texttt{ZPAPER} & The aperture the zero point was measured in. \\
+\hline
+\texttt{ZPAB} & The zero point on the AB system. \\
+\hline
+\texttt{ZPSCOPE} & Whether the zero point is an aperture or a total-flux one. \\
+\hline
+\texttt{APCOR}, \texttt{APCORRMS}, \texttt{APCORMTH} & Aperture correction in magnitudes, its scatter, and how it was measured. \\
+\hline
+\texttt{FWHMUSED} & The FWHM apertures were actually sized from. \\
+\hline
+\texttt{FLUXCAL} & Set on \texttt{*\_fluxcal.fits}; \texttt{BUNIT} becomes \texttt{Jy/pixel}. \\
+\hline
+\texttt{STEPPLAN}, \texttt{STEPSKIP} & The resolved step plan, and what was skipped. \\
+\hline
+\end{longtable}
+\end{center}
+
+\section{Catalog Column Reference}
+\texttt{*\_catalog.csv}, one row per detected source.
+
+\begin{center}
+\begin{longtable}{|p{4.4cm}|p{10.1cm}|}
+\hline
+\textbf{Column} & \textbf{Meaning} \\
+\hline
+\endhead
+\texttt{NUMBER} & Segmentation label. \\
+\hline
+\texttt{ALPHA\_J2000}, \texttt{DELTA\_J2000} & Sky position, degrees. \\
+\hline
+\texttt{X\_IMAGE}, \texttt{Y\_IMAGE} & Pixel position, 1-indexed (FITS convention). \\
+\hline
+\texttt{FLUX\_ISO}, \texttt{FLUXERR\_ISO} & Isophotal flux and its error. \\
+\hline
+\texttt{MAG\_INST}, \texttt{MAGERR\_INST} & Instrumental magnitude, before the zero point. \\
+\hline
+\texttt{MAG\_ISO}, \texttt{MAGERR\_ISO} & Isophotal magnitude. \textbf{Not a total magnitude.} \\
+\hline
+\texttt{MAGERR\_STAT} & The statistical part of the error alone. \\
+\hline
+\texttt{MAG\_APER}, \texttt{MAGERR\_APER}, \texttt{FLUX\_APER}, \texttt{FLUXERR\_APER} & Measured in the zero point's own aperture. \\
+\hline
+\texttt{MAG\_AUTO}, \texttt{MAGERR\_AUTO}, \texttt{FLUX\_AUTO}, \texttt{FLUXERR\_AUTO} & Kron elliptical --- the standard total magnitude. \\
+\hline
+\texttt{KRON\_RADIUS} & The Kron radius used. \\
+\hline
+\texttt{MAG\_PSF}, \texttt{MAGERR\_PSF} & PSF-fitted --- the matched filter for a point source. \\
+\hline
+\texttt{CHI2\_PSF} & Goodness of the PSF fit. \\
+\hline
+\texttt{PSF\_MINUS\_AUTO} & What classification is based on. \\
+\hline
+\texttt{MAG\_BEST}, \texttt{MAGERR\_BEST} & \textbf{The default choice.} PSF for point sources, Kron for extended. \\
+\hline
+\texttt{CLASS} & \texttt{STAR}, \texttt{EXTENDED}, \texttt{AMBIGUOUS}, \texttt{SATURATED} or \texttt{EDGE}. Omitted when classification is off. \\
+\hline
+\texttt{CLASS\_STAR} & Stellarity, 0--1. Omitted when classification is off. \\
+\hline
+\texttt{LIMIT\_MAG} & Limiting magnitude at this position, for non-detections. \\
+\hline
+\texttt{SNR} & Signal-to-noise from the ERR plane. \\
+\hline
+\texttt{FLAGS} & DQ flags found inside the source's segment. \\
+\hline
+\texttt{ISOAREA\_IMAGE} & Segment area in pixels. \\
+\hline
+\texttt{FLUX\_RADIUS} & Half-light radius. \\
+\hline
+\texttt{FWHM\_IMAGE} & Per-source FWHM. \\
+\hline
+\end{longtable}
+\end{center}
+
+When classification is off, \texttt{CLASS} and \texttt{CLASS\_STAR} are
+\emph{omitted} rather than filled with a placeholder, so a downstream cut on
+either fails loudly instead of silently selecting nothing. \texttt{MAG\_BEST}
+falls back to Kron for every source.
+
+\subsection{Data-Quality (DQ) Bits}
+The \texttt{DQ} extension is an integer bitmask; a pixel may carry several.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{|c|l|X|}
+\hline
+\textbf{Value} & \textbf{Name} & \textbf{Meaning} \\
+\hline
+\texttt{0} & --- & Good. \\
+\hline
+\texttt{1} & \texttt{SATURATED} & At or above the saturation level. \\
+\hline
+\texttt{2} & \texttt{BAD\_PIXEL} & Hot or dead, from the bad-pixel mask. \\
+\hline
+\texttt{4} & \texttt{COSMIC\_RAY} & Flagged by cosmic-ray rejection. \\
+\hline
+\texttt{8} & \texttt{NO\_DATA} & NaN, or outside the warp footprint. \\
+\hline
+\texttt{16} & \texttt{REJECTED} & Some contributing frames were rejected here (stacks only). \\
+\hline
+\end{tabularx}
+\end{center}
+
+\section{Module \& Function Reference}
+Everything is importable, and the command-line tools are a thin layer over these
+functions. A phase can therefore be driven from a script or a notebook exactly
+as the CLI drives it:
+
+\begin{lstlisting}[language=Python]
+from cassa_photometry.config import load_config
+from cassa_photometry.instruments.registry import get_profile
+from cassa_photometry.phase1_calibration import pipeline as phase1
+
+config  = load_config("my_config.yaml")
+profile = get_profile(config.instrument, config)
+phase1.run("raw/", "work/phase1", config=config, instrument=profile)
+\end{lstlisting}
+
+\subsection{Shared Infrastructure}
+\begin{center}
+\begin{longtable}{|p{3.6cm}|p{10.9cm}|}
+\hline
+\textbf{Module} & \textbf{What it provides} \\
+\hline
+\endhead
+\texttt{config} & \texttt{load\_config(path)} builds a \texttt{PipelineConfig} from the defaults plus an optional YAML file, validating every key against its dotted path and raising \texttt{ConfigError} otherwise. \texttt{PipelineConfig} also resolves the cache directories: \texttt{resolve\_astrometry\_index\_dir()}, \texttt{resolve\_index\_cache\_dir()}, \texttt{resolve\_catalog\_cache\_dir()}, \texttt{resolve\_index\_token()}. \texttt{StepToggles} carries \texttt{enabled(name)}, \texttt{skipped()} and \texttt{step\_names()}. \\
+\hline
+\texttt{steps} & The step registry. \texttt{registry\_for(phase)} returns a phase's declared \texttt{Step} objects in canonical order; \texttt{resolve\_plan(phase, toggles)} applies exclusions, reordering and custom steps and validates the dependency tokens, raising \texttt{StepPlanError} on a violation; \texttt{resolved\_names()} is the common case; \texttt{describe\_plan()} renders it for \texttt{-{}-show-plan}; \texttt{load\_custom\_step(name, spec)} imports a user step from \texttt{path.py:callable}. \\
+\hline
+\texttt{fits\_utils} & \texttt{write\_mef()} and \texttt{read\_mef()} are the SCI/ERR/DQ file format. \texttt{build\_dq()} composes boolean masks into the bitmask; \texttt{DQ\_SATURATED} \ldots \texttt{DQ\_REJECTED} and \texttt{DQ\_FLAG\_NAMES} name the bits; \texttt{CALVERS} is the calibration vintage stamped on every product. \\
+\hline
+\texttt{paths} & The on-disk layout every phase shares. \texttt{phase\_dir()}, \texttt{sibling\_phase\_dir()} and \texttt{find\_phase\_dir()} locate a phase directory; \texttt{find\_raw\_frames()} walks a raw tree of any shape; \texttt{raw\_tree\_summary()} counts frames per directory for the log. \\
+\hline
+\texttt{psf} & PSF measurement, shared by every phase. \texttt{estimate\_fwhm()} fits isolated bright stars with 2D Gaussians; \texttt{detect\_stars()} wraps DAOStarFinder; \texttt{build\_epsf()} builds an empirical PSF from a frame's own stars; \texttt{background\_rms()} and \texttt{image\_stats()} give robust statistics. \\
+\hline
+\texttt{logging\_utils} & \texttt{get\_logger(name, run\_dir, level)} returns a logger that also writes into the run directory; \texttt{set\_default\_level()} sets the level used when none is given. \\
+\hline
+\texttt{targets} & What is being observed, and therefore how it should be measured. \texttt{TargetRegistry.resolve()} returns the \texttt{Target} a frame describes, from its header or a \texttt{targets.yaml}; \texttt{normalise\_type()} maps an \texttt{OBJTYPE} onto a known type. \\
+\hline
+\texttt{doctor} & \texttt{run\_checks()} performs every check in report order and \texttt{report()} prints them, returning the failure count. Each \texttt{check\_*} function is independently callable. \\
+\hline
+\end{longtable}
+\end{center}
+
+\subsection{Instrument Profiles}
+\begin{center}
+\begin{longtable}{|p{3.6cm}|p{10.9cm}|}
+\hline
+\textbf{Module} & \textbf{What it provides} \\
+\hline
+\endhead
+\texttt{instruments.base} & \texttt{InstrumentProfile} --- the interface every setup implements. Detector constants: \texttt{get\_gain()}, \texttt{get\_read\_noise()}, \texttt{get\_saturation()}, \texttt{get\_pixel\_scale()}, each of which consults the matching \texttt{*\_from\_header()} first and returns \texttt{None} rather than guessing. Frame identity: \texttt{get\_image\_type()}, \texttt{get\_exposure()}, \texttt{get\_filter()}, \texttt{standardize\_filter()}, \texttt{science\_band()}. Geometry: \texttt{get\_amplifiers()}, \texttt{get\_overscan\_region()}, \texttt{get\_trim\_region()}, \texttt{get\_subframe\_origin()}. State: \texttt{get\_read\_mode()}, \texttt{get\_calibration\_status()}, \texttt{already\_calibrated()}, \texttt{flat\_proxies()}, \texttt{apply\_linearity()}. \\
+\hline
+\texttt{instruments.registry} & \texttt{get\_profile(name, config)} is the one place a profile is chosen by name --- it also honours \texttt{instrument\_module} and the \texttt{cassa\_photometry.instruments} entry-point group. \texttt{available\_profiles()} lists the registry for CLI help. \\
+\hline
+\texttt{instruments.cassa} & \texttt{Cassa8InchProfile}: the CASSA 8-inch f/5 with the IMX585. \texttt{read\_mode()} and \texttt{normalize\_read\_mode()} resolve HCG/LCG; \texttt{get\_gain()} and \texttt{get\_read\_noise()} interpolate a mode-keyed detector curve when the header is silent; \texttt{set\_detector\_curve()} replaces that curve with measured \texttt{cassa-camchar} results. \\
+\hline
+\texttt{instruments.overrides} & \texttt{with\_detector\_overrides(profile, detector)} layers a config \texttt{detector:} block over any profile, so describing a setup never requires code. \\
+\hline
+\end{longtable}
+\end{center}
+
+\subsection{Phase 1 --- Calibration}
+\begin{center}
+\begin{longtable}{|p{3.6cm}|p{10.9cm}|}
+\hline
+\textbf{Module} & \textbf{What it provides} \\
+\hline
+\endhead
+\texttt{phase1\_calibration.\allowbreak pipeline} & \texttt{run()} orchestrates the phase. \texttt{build\_master\_bias()} median-combines with uncertainty; \texttt{build\_master\_dark()} bias-subtracts each frame first and normalises mixed exposures to a common one; \texttt{build\_master\_flat()} bias- and dark-subtracts, then normalises \emph{each} frame before combining --- twilight flats fade as they are taken, so combining first measures the fading sky rather than the pixel response. \\
+\hline
+\texttt{phase1\_calibration.\allowbreak processor} & \texttt{UniversalProcessor.process\_science\_frame()} applies ISR to a frame and returns a \texttt{CalibratedFrame} (data in electrons, with uncertainty, plus the DQ plane). \texttt{subtract\_scaled\_dark()} rescales a dark from its own exposure to the frame's; \texttt{crop\_master\_to\_frame()} aligns a full-frame master to a windowed science frame; \texttt{implausible\_cosmic\_rays()} decides when a cosmic-ray mask cannot be real. \\
+\hline
+\texttt{phase1\_calibration.\allowbreak data\_models} & \texttt{load\_standardized\_ccds()} reads a FITS file into \texttt{StandardCCD} objects --- an Astropy \texttt{CCDData} plus unified metadata --- seeding the error budget with \texttt{ccdproc.create\_deviation}. \\
+\hline
+\end{longtable}
+\end{center}
+
+\subsection{Phase 2 --- Integration \& Astrometry}
+\begin{center}
+\begin{longtable}{|p{3.6cm}|p{10.9cm}|}
+\hline
+\textbf{Module} & \textbf{What it provides} \\
+\hline
+\endhead
+\texttt{phase2\_integration.\allowbreak pipeline} & \texttt{run()} and \texttt{IntegrationPipeline} (\texttt{setup()}, \texttt{execute()}): grouping, anchor selection, registration, stacking and the astrometric solve. \\
+\hline
+\texttt{phase2\_integration.\allowbreak wcs} & \texttt{WCSSolver.solve()} --- the solve itself, the widened rescue pass, the plate-scale sanity check, and the residual record written into the header. \\
+\hline
+\texttt{phase2\_integration.\allowbreak solvers} & \texttt{get\_solver(logger, config)} returns the backend this configuration asks for, falling back when it cannot run; \texttt{available\_backends(config)} lists what this machine can use; \texttt{BACKENDS} is the ordered registry. \\
+\hline
+\texttt{\ldots solvers.base} & \texttt{Solver} is the interface (\texttt{available()}, \texttt{solve()}). \texttt{SolveHints} carries what is known before solving, with \texttt{widened()} and \texttt{without\_scale()} for the rescue passes. \texttt{SolveResult.residuals()} reduces matched pairs to a per-axis RMS. \texttt{solved\_pixel\_scale()} reads the scale back out of a solved WCS. \\
+\hline
+\texttt{\ldots solvers.astap} & \texttt{AstapSolver} and \texttt{find\_binary()}. Converts hints to ASTAP's conventions (right ascension in \emph{hours}, declination as south-polar distance, field \emph{height} in degrees), builds a clean WCS header from the solver's \texttt{.ini}, and distinguishes ``no star database covering this field'' from ``no solution found'' --- the fixes differ. \\
+\hline
+\texttt{\ldots solvers.solvefield} & \texttt{SolveFieldSolver}: shells out to \texttt{solve-field}, reads back the \texttt{.corr} matched-star table, and cleans its temporary files. \\
+\hline
+\texttt{\ldots solvers.inprocess} & \texttt{InProcessSolver}: the PyPI \texttt{astrometry} package, extracting sources itself. \\
+\hline
+\texttt{phase2\_integration.\allowbreak astrometry\_qc} & The backend-independent residual. \texttt{measure()} returns matched field/reference pairs for a solved frame; \texttt{detect\_sources()} extracts with DQ-flagged pixels masked; \texttt{reference\_positions()} reuses Phase 3's cached reference catalog; \texttt{pair\_by\_position()} does mutual nearest-neighbour matching within a radius, so two field sources cannot both claim one catalog star. \\
+\hline
+\texttt{phase2\_integration.\allowbreak math\_utils} & \texttt{MathEngine}: \texttt{register\_plane()}, \texttt{register\_variance()} and \texttt{register\_mask()} warp the three planes with the interpolation each one needs; \texttt{weighted\_stack()} is the inverse-variance combine with rejection; \texttt{calc\_scale()} measures transparency from matched stars; \texttt{extract\_2d\_background()} and \texttt{center\_crop()} support both. \\
+\hline
+\texttt{phase2\_integration.io} & \texttt{FITSHandler}: \texttt{extract\_metadata()} skims grouping and plate-scale metadata, \texttt{load\_planes()} returns SCI/ERR/DQ, \texttt{save\_master()} writes the multi-extension master. \\
+\hline
+\texttt{phase2\_integration.\allowbreak epochs} & \texttt{epoch\_key()} --- the observing-night label, binned on local noon so a night crossing UT midnight stays whole. \\
+\hline
+\texttt{phase2\_integration.\allowbreak hardware} & \texttt{HardwareManager}: \texttt{allocate\_resources()} picks a core count, \texttt{print\_estimations()} reports the expected peak memory and runtime. \\
+\hline
+\texttt{phase2\_integration.\allowbreak visuals} & \texttt{VisualQAGenerator.generate\_pdf()} --- the raw $\rightarrow$ calibrated $\rightarrow$ master panel; \texttt{find\_raw\_frame()} locates the raw behind a calibrated one. \\
+\hline
+\texttt{phase2\_integration.\allowbreak models} & \texttt{TargetGroup} --- the state and file list for one object/filter/hardware combination. \\
+\hline
+\end{longtable}
+\end{center}
+
+\subsection{Phase 3 --- Photometry}
+\begin{center}
+\begin{longtable}{|p{3.6cm}|p{10.9cm}|}
+\hline
+\textbf{Module} & \textbf{What it provides} \\
+\hline
+\endhead
+\texttt{phase3\_photometry.\allowbreak pipeline} & \texttt{run()} over one master or a directory; \texttt{detect\_band()} resolves the science band, header first. \\
+\hline
+\texttt{phase3\_photometry.\allowbreak engine} & \texttt{UniversalPhotometryEngine}: \texttt{calculate\_local\_zero\_point()} does differential photometry against the reference catalog and returns a value \emph{with} an uncertainty; \texttt{generate\_full\_catalog()} detects, deblends, measures and classifies; \texttt{export\_flux\_calibrated\_image()} writes Jy/pixel propagating the ERR plane; \texttt{resolve\_fwhm()} and \texttt{search\_radius()} size the apertures and the catalog cone. \texttt{combine\_zeropoints()} combines per-star zero points with sigma clipping. \\
+\hline
+\texttt{phase3\_photometry.\allowbreak catalogs} & \texttt{fetch\_reference\_catalog()} returns a standardised catalog for a band, applying the priority cascade and the on-disk cache. The individual queries --- \texttt{query\_gaia\_synthetic()}, \texttt{query\_apass()}, \texttt{query\_panstarrs()}, \texttt{query\_sdss()} --- are callable directly. \\
+\hline
+\texttt{phase3\_photometry.\allowbreak apcor} & \texttt{measure()} builds a curve of growth and \texttt{from\_curve()} turns it into an \texttt{ApertureCorrection}, whose \texttt{at()} gives the correction at a position. This is what makes the zero point a total-flux one. \\
+\hline
+\texttt{phase3\_photometry.\allowbreak morphology} & \texttt{classify()} separates stars from extended sources using each frame's \emph{own} stellar locus in \texttt{MAG\_PSF} $-$ \texttt{MAG\_AUTO}, and returns a \texttt{Classification} carrying the classes, the stellarity and the magnitude below which they stop being meaningful. \\
+\hline
+\texttt{phase3\_photometry.\allowbreak photsys} & \texttt{system\_of()}, \texttt{ab\_offset()}, \texttt{effective\_wavelength\_nm()}, \texttt{describe()} --- which photometric system each band is on, and what converting costs. \\
+\hline
+\texttt{phase3\_photometry.\allowbreak verify} & \texttt{run()} and \texttt{verify\_calibration()} compare catalog magnitudes against APASS, Pan-STARRS and SDSS. \texttt{match\_radius\_arcsec()} and \texttt{match\_radius\_from\_header()} derive the cross-match radius from \texttt{ASTRMS}; \texttt{companion\_fits()} finds the image behind a CSV; \texttt{cross\_match\_and\_report()} prints both error bars side by side. \\
+\hline
+\end{longtable}
+\end{center}
+
+\subsection{Phase 4 --- Diagnostics}
+\begin{center}
+\begin{longtable}{|p{3.6cm}|p{10.9cm}|}
+\hline
+\textbf{Module} & \textbf{What it provides} \\
+\hline
+\endhead
+\texttt{phase4\_diagnostics.\allowbreak pipeline} & \texttt{run()} assembles the report and returns the metrics dictionary it also writes as \texttt{metrics.json}. \\
+\hline
+\texttt{phase4\_diagnostics.\allowbreak stages} & \texttt{diagnose\_raw()}, \texttt{diagnose\_calibrated()}, \texttt{diagnose\_master()} and \texttt{diagnose\_photometry()} --- one per stage, each independently callable on a single file. \\
+\hline
+\texttt{phase4\_diagnostics.\allowbreak plots} & \texttt{Report} collects figures into a multi-page PDF and optional PNGs. \texttt{zscale\_panel()}, \texttt{image\_panel()}, \texttt{histogram\_panel()}, \texttt{scatter\_panel()}, \texttt{bar\_panel()}, \texttt{radial\_profile\_panel()}, \texttt{overlay\_positions()}, \texttt{text\_panel()} and \texttt{new\_page()}. \\
+\hline
+\texttt{phase4\_diagnostics.psf} & The PSF estimation each stage uses. \\
+\hline
+\end{longtable}
+\end{center}
+
+\subsection{Sky Data}
+\begin{center}
+\begin{longtable}{|p{3.6cm}|p{10.9cm}|}
+\hline
+\textbf{Module} & \textbf{What it provides} \\
+\hline
+\endhead
+\texttt{astap\_db} & On-demand ASTAP star tiles. \texttt{band\_of()} and \texttt{tile\_of()} are the tiling arithmetic (36 declination bands of 5$^\circ$, band-dependent RA tile counts); \texttt{required\_tiles()} returns the tiles covering a pointing plus the \texttt{<series>\_0101} marker tile ASTAP uses to recognise a database at all; \texttt{series\_for\_fov()} picks a series from the field height; \texttt{AstapTileStore.ensure()} fetches only what is missing, over HTTP range requests into the published ZIP; \texttt{resolve\_db\_dir()} applies the resolution order. Failures raise \texttt{AstapDatabaseError} naming the archive. \\
+\hline
+\texttt{astrometry\_index} & On-demand Astrometry.net index files. \texttt{required\_indexes()} matches each index's quad-scale range against the field size and samples the search cone's boundary so an edge pointing still picks up its neighbour; \texttt{build\_store()} returns a \texttt{LocalIndexStore} or \texttt{HttpIndexStore} as configured; \texttt{IndexManifest} and \texttt{IndexEntry} model the catalogue; \texttt{field\_size\_arcmin()} and \texttt{healpix\_available()} support both. \\
+\hline
+\texttt{index\_fetch} & \texttt{run()} --- the logic behind \texttt{cassa-index-fetch}, returning a process exit code. \\
+\hline
+\end{longtable}
+\end{center}
+
+\subsection{Simulation}
+\begin{center}
+\begin{longtable}{|p{3.6cm}|p{10.9cm}|}
+\hline
+\textbf{Module} & \textbf{What it provides} \\
+\hline
+\endhead
+\texttt{simulate} & \texttt{run(preset, outdir, seed)} generates a complete observing run --- bias, dark, flat and science frames --- plus the truth files, reproducibly from the seed. \\
+\hline
+\texttt{simulate.scene} & The sky half of the forward model, in e-/s. \texttt{Scene.render()} draws a real Gaia DR3 star field and a galaxy at a given seeing, airmass and dither; \texttt{local\_fwhm()} broadens the PSF off-axis for coma; \texttt{flux\_e\_per\_s()} and \texttt{sky\_e\_per\_s()} apply the atmosphere; \texttt{truth\_table()} writes every source's true magnitude. \texttt{moffat\_alpha()} and \texttt{enclosed\_fraction()} are the profile mathematics. \\
+\hline
+\texttt{simulate.detector} & The detector half: \texttt{DetectorModel.expose\_science()}, \texttt{expose\_bias()}, \texttt{expose\_dark()} and \texttt{expose\_flat()} apply gain, read noise, dark current, the flat field and non-linearity. \\
+\hline
+\texttt{simulate.presets} & \texttt{NightModel.step()} gives the conditions at a point in the night; \texttt{delivered\_fwhm\_arcsec()} converts DIMM zenith seeing into the PSF a frame actually delivers, through airmass, band and guiding. \\
+\hline
+\texttt{simulate.frames} & \texttt{write\_science()} and \texttt{write\_calibration()} write the FITS frames with pointing, target and observing-condition cards; \texttt{airmass\_from\_altitude()} is the usual refraction-corrected relation. \\
+\hline
+\end{longtable}
+\end{center}
+
+\subsection{Test Suite}
+The pipeline ships 474 tests. They run with no network and with no plate solver
+installed: the subprocess boundary is faked where that is what is under test,
+the tile arithmetic and the residual mathematics are pure, and anything needing
+outbound access is marked \texttt{network}.
+
+\begin{lstlisting}[language=bash]
+pytest                        # everything
+pytest -m "not network"       # skip the tests that need outbound access
+make lint                     # ruff
+\end{lstlisting}
+
 
 \end{document}

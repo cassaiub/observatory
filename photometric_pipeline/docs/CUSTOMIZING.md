@@ -165,6 +165,56 @@ mistaken for a default one afterwards:
 | Phase 3 `_fluxcal.fits` | `STEPPLAN`, `STEPSKIP` |
 | Phase 4 `metrics.json` | `step_plans` for all four phases |
 
+### Choosing a plate solver
+
+Phase 2 needs one, and three backends can provide it. `install.sh` tries them in
+order and the first that installs wins; `solver: auto` then prefers whichever is
+present, in the same order.
+
+| Backend | Why it is where it is |
+|---|---|
+| `astap` | An 875 KB binary, no Python dependency, `apt install astap-cli` on Debian/Ubuntu. The **only** backend that exists on ARM Linux. Solved the workshop masters in 0.11 s and fetches ~6 MB of sky tiles per field. |
+| `solve-field` | The Astrometry.net reference implementation, from conda-forge. The only backend that supplies its own matched-star table. |
+| `astrometry-py` | The PyPI in-process solver, so a pip-only machine with no system packages still works. No ARM Linux wheel. |
+
+```yaml
+phase2:
+  solver: auto              # auto | astap | solve-field | astrometry-py
+  astap_path: null          # null -> astap_cli, then astap, on PATH
+  astap_db_dir: null        # null -> CASSA_ASTAP_DB, then ~/.cache/cassa-photometry/astap
+  astap_db_series: auto     # auto picks from the field height; or d50 / d05 / g05
+  astap_db_download: true   # false: select but never fetch, and say what is missing
+```
+
+**The products are the same whichever solves.** ASTAP reports no matched stars,
+so `ASTRMS` — which phase 3 sizes its cross-match radius from — is measured by
+the pipeline against a reference catalog instead of being taken from the solver.
+The header records which route was used as `ASTRMSRC`. Without this the
+photometry would depend on which solver happened to be installed.
+
+### Star databases and index files: fetched per field
+
+Neither backend needs a bulk download. Both inspect the frame, work out what
+that field needs, check what is already on disk, and fetch only the difference:
+
+| | astrometry.net | ASTAP |
+|---|---|---|
+| Per field | ~246 MB of index tiles | **~6 MB of star tiles** |
+| Cache | `~/.cache/cassa-photometry/astrometry` | `~/.cache/cassa-photometry/astap` |
+| Override | `phase2.index_cache_dir`, `CASSA_INDEX_CACHE` | `phase2.astap_db_dir`, `CASSA_ASTAP_DB` |
+
+ASTAP publishes no per-tile URL, so the pipeline reads its tiles out of the
+published ZIP with HTTP range requests — the central directory costs 85 KB, and
+only the members a field needs are transferred. Nothing is hosted by the
+observatory and nothing is pre-installed.
+
+Repointing costs only the tiles the new field adds. Measured on the workshop
+data: 6.3 MB and 65 s for the first field from a cold cache, then **1.2 s** for
+the next with no download at all.
+
+For an air-gapped machine set `astap_db_download: false`; selection still runs
+and the run reports exactly which tiles are missing rather than hanging.
+
 ### Deprecated duplicates
 
 Four settings used to exist twice and were combined with AND, so switching one
@@ -191,7 +241,7 @@ phase1:
   calibration_temp_tolerance_c: 3.0
 
 phase2:
-  solver: auto                   # auto | solve-field | astrometry-py
+  solver: auto                   # auto | astap | solve-field | astrometry-py
   epoch_bin: night               # none | night | "6h"
   stack_weight: point_source     # point_source | extended
   fwhm_reject_factor: 1.6        # 0 keeps every frame however soft
@@ -210,13 +260,20 @@ full dotted path rather than silently ignored.
 ### Where the caches live
 
 ```bash
-~/.cache/cassa-photometry/astrometry   # index files, fetched on demand
+~/.cache/cassa-photometry/astrometry   # Astrometry.net index files, on demand
+~/.cache/cassa-photometry/astap        # ASTAP star tiles, on demand
 ~/.cache/cassa-photometry/catalogs     # reference-catalog queries
 ```
 
-Override with `phase2.index_cache_dir`, `phase3.catalog_cache_dir`, or the
-`CASSA_INDEX_CACHE` / `CASSA_CATALOG_CACHE` environment variables. Reducing a
-field once populates both, after which `--offline` works.
+Override with `phase2.index_cache_dir`, `phase2.astap_db_dir`,
+`phase3.catalog_cache_dir`, or the `CASSA_INDEX_CACHE`, `CASSA_ASTAP_DB` and
+`CASSA_CATALOG_CACHE` environment variables. Reducing a field once populates the
+solver cache and the catalog cache, after which `--offline` works.
+
+A full local Astrometry.net set you manage yourself still wins over the cache:
+point `CASSA_ASTROMETRY_INDEX` (or `phase2.astrometry_index_dir`) at it and
+nothing is downloaded. The same applies to an ASTAP database installed by hand —
+point `phase2.astap_db_dir` at it.
 
 ---
 

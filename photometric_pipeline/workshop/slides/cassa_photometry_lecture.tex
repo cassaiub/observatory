@@ -463,7 +463,7 @@ cassa-doctor                               # is this machine ready? (run it firs
     \node[ann] at (0,-3.16)    {median ratio at matched stars \\ \emph{clouds / airmass}};
     \node[ann] at (2.7,-3.16)  {bicubic, order 3 \\ \emph{keep the PSF peak}};
     \node[ann] at (5.4,-3.16)  {inverse-variance $+$ clip \\ \emph{depth $\propto\sqrt{N}$}};
-    \node[ann] at (8.1,-3.16)  {\texttt{solve-field} or in-process; index fetched once \\ \emph{pixels $\rightarrow$ sky}};
+    \node[ann] at (8.1,-3.16)  {ASTAP / \texttt{solve-field} / in-process; \\ sky data fetched per field \\ \emph{pixels $\rightarrow$ sky}};
   \end{tikzpicture}
 
   \vspace{0.4em}
@@ -498,6 +498,48 @@ cassa-doctor                               # is this machine ready? (run it firs
         \foreach \x in {f1,f2,f3,f4} \draw[garr] (\x) -- (st);
         \draw[arr] (st) -- (m);
       \end{tikzpicture}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Phase 2 --- the plate solve: three backends, one answer}
+  \begin{columns}[T]
+    \begin{column}{0.54\textwidth}
+      \footnotesize
+      \begin{tabular}{@{}l l@{}}
+        \toprule
+        \textbf{Backend} & \textbf{Where it runs} \\
+        \midrule
+        \textbf{ASTAP} & everywhere, ARM included \\
+        \texttt{solve-field} & Linux x86-64, Intel macOS \\
+        in-process & no ARM Linux wheel \\
+        \bottomrule
+      \end{tabular}
+
+      \vspace{0.7em}
+      \begin{itemize}\footnotesize
+        \item The installer tries them \emph{in that order}; the first that installs wins.
+        \item Sky data is fetched \textbf{per field}: $\sim$6\,MB (ASTAP) or
+              $\sim$246\,MB (Astrometry.net), out of 859\,MB / 34\,GB published.
+        \item Repointing costs only what the new field adds.
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.44\textwidth}
+      \centering
+      \begin{tikzpicture}[node distance=3mm, scale=0.9, transform shape]
+        \node[dat, text width=2.6cm] (a) {ASTAP\\ \tiny no matched stars};
+        \node[dat, below=4mm of a, text width=2.6cm] (b) {\texttt{solve-field}\\ \tiny matched-star table};
+        \node[op, right=8mm of a, text width=2.4cm, yshift=-6mm] (qc) {measure \texttt{ASTRMS}\\ \tiny in-pipeline};
+        \node[prod, below=6mm of qc, text width=2.4cm] (out) {same header\\ \tiny + \texttt{ASTRMSRC}};
+        \draw[garr] (a) -- (qc);
+        \draw[garr] (b) -- (qc);
+        \draw[arr] (qc) -- (out);
+      \end{tikzpicture}
+
+      \vspace{0.3em}
+      {\scriptsize Phase 3 sizes its cross-match from \texttt{ASTRMS}, so the pipeline
+      \emph{measures} it rather than trusting the solver --- otherwise your photometry
+      would depend on which solver you installed.}
     \end{column}
   \end{columns}
 \end{frame}
@@ -732,7 +774,8 @@ cassa-doctor                               # is this machine ready? (run it firs
           you fill in the lines marked \texttt{TODO}, and a worked solution surrounds them.
     \item Notebook \texttt{01} reads only the raw frames and returns a go/no-go verdict;
           \texttt{02}--\texttt{04} each consume the previous notebook's output.
-    \item Phase 2 plate-solves against an Astrometry.net index (fetched once, then local);
+    \item Phase 2 plate-solves against a star catalog, fetched \textbf{per field} and then
+          cached --- whichever of the three backends you installed;
           Phase 3's cross-match is a \textbf{live} catalog query.
   \end{itemize}
 \end{frame}

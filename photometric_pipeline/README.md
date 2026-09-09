@@ -22,6 +22,11 @@ A re-run replaces that phase's products in place rather than accumulating copies
 Plus `cassa-verify` (compare catalog magnitudes against APASS/Pan-STARRS/SDSS)
 and `cassa-run` (phases 1–3 chained).
 
+> **Looking something up?** [`docs/REFERENCE.md`](docs/REFERENCE.md) has every
+> command and flag, every configuration key with its default, every environment
+> variable, every FITS keyword and catalog column, and the Python API.
+> [`docs/CUSTOMIZING.md`](docs/CUSTOMIZING.md) covers changing what a run does.
+
 ## Error propagation & data model
 
 Every science image is a **multi-extension FITS** file with three planes:
@@ -76,49 +81,127 @@ meaningful. `AMBIGUOUS` is the honest answer, not a failure.
 
 ### Astrometric error
 
-The WCS carries an uncertainty too. After a successful solve, Phase 2 reads
-`solve-field`'s `.corr` table — the detected stars paired with their
-index-catalog counterparts — and records the RMS of those residuals:
+The WCS carries an uncertainty too, and **every backend produces it** — the
+pipeline measures the residual itself rather than taking the solver's word,
+because `solve-field` reports matched star pairs and ASTAP does not. Where a
+backend supplies its own matched stars they are used; otherwise the frame's
+detected sources are projected through the solved WCS and paired against the
+reference catalog Phase 3 already caches.
 
 | Keyword | Meaning |
 |---------|---------|
 | `CRDER1`, `CRDER2` | FITS-standard random error per axis, in degrees |
 | `ASTRMS` | total RMS residual, in arcsec |
-| `ASTNSTAR` | number of stars matched against the index |
+| `ASTNSTAR` | number of stars matched |
+| `ASTRMSRC` | which route produced it — the solver's own table, or the reference catalog |
 
 This distinguishes a solve that *converged* from one that actually **fits**, and
 it is what `cassa-verify` uses to size its cross-match radius. Phase 4 reports it
 in the stage 2 panel and in `metrics.json`.
 
+Measuring it in-pipeline is what keeps the two install paths equivalent. If the
+residual came from the solver, a frame solved by ASTAP would carry none, Phase 3
+would silently fall back to a fixed 2″ match radius, and the photometry would
+depend on which solver a given machine happened to install.
+
 ## Installation
 
 ```bash
-git clone <repo-url>
-cd cassa_observatory/photometric_pipeline
+git clone https://github.com/cassaiub/observatory.git
+cd observatory/photometric_pipeline
 ./install.sh
 ```
 
-That is the whole procedure. `install.sh` picks an environment (an active conda
-env, else conda if you have it, else a plain `python3 -m venv`), installs every
-dependency **including a working plate solver**, installs the pipeline, and then
-runs `cassa-doctor` to prove it worked. Running it again updates in place.
+That is the whole procedure on **Linux and macOS**. `install.sh` picks an
+environment (an active conda env, else conda if you have it, else a plain
+`python3 -m venv`), installs every dependency **including a working plate
+solver**, installs the pipeline, and then runs `cassa-doctor` to prove it
+worked. Running it again updates in place.
 
 The conda route is the one to prefer: `environment.yml` pins Python, brings the
 scientific stack as prebuilt binaries, and includes JupyterLab for the workshop
 notebooks. Install [Miniforge](https://conda-forge.org/download/) first if you
 have no conda.
 
-On **Windows**, install [WSL](https://learn.microsoft.com/windows/wsl/install)
-and run the same commands inside it. There is no native Windows install and
-`install.ps1` does not attempt one: no plate solver is published for Windows —
-conda-forge builds `astrometry` for `linux-64` and `osx-64` only, and the PyPI
-in-process solver ships no Windows wheel — so a native environment would build
-and then fail at the first WCS solve. Running `install.ps1` prints the WSL
-steps.
+### Platform support
+
+| Platform | Route | Solver you get |
+|---|---|---|
+| **Linux x86-64** | `./install.sh` | ASTAP, else `solve-field`, else in-process |
+| **Linux aarch64** (Raspberry Pi, ARM servers) | `./install.sh --conda` | **ASTAP only** — nothing else is published for ARM Linux |
+| **macOS Intel** | `./install.sh` | ASTAP, else `solve-field`, else in-process |
+| **macOS Apple Silicon** | `./install.sh` | ASTAP, else in-process (`solve-field` has no `osx-arm64` build) |
+| **Windows** | WSL, then the Linux route | as Linux x86-64 |
+
+### Step by step, per operating system
+
+**Linux** (Debian/Ubuntu shown; any distribution works)
+
+```bash
+sudo apt update && sudo apt install -y git curl unzip
+curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+bash Miniforge3-$(uname)-$(uname -m).sh          # accept the defaults
+exec $SHELL -l                                    # pick up conda on PATH
+
+git clone https://github.com/cassaiub/observatory.git
+cd observatory/photometric_pipeline
+./install.sh
+conda activate cassa-photometry
+cassa-doctor
+```
+
+On **aarch64** pass `--conda`: the in-process solver publishes no ARM Linux
+wheel, so the conda route plus ASTAP is the combination that works.
+
+**macOS** (Intel and Apple Silicon alike — the installer name is built from your
+own machine, so the commands are identical)
+
+```bash
+xcode-select --install                            # once, for git and the toolchain
+curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+bash Miniforge3-$(uname)-$(uname -m).sh
+exec $SHELL -l
+
+git clone https://github.com/cassaiub/observatory.git
+cd observatory/photometric_pipeline
+./install.sh
+conda activate cassa-photometry
+cassa-doctor
+```
+
+Gatekeeper quarantines an unsigned ASTAP binary downloaded from the web. If
+`cassa-doctor` reports the binary as present but unusable, clear the attribute:
+
+```bash
+xattr -d com.apple.quarantine "$(command -v astap_cli)"
+```
+
+**Windows** — through WSL, which is real x86-64 Linux. From an **administrator**
+PowerShell:
+
+```powershell
+wsl --install                    # reboot when prompted
+```
+
+Then open **Ubuntu** from the Start menu, finish creating your user, and follow
+the Linux instructions above inside that window. Every command is the Linux one,
+and `cassa-doctor` reports native Windows as a failure with this same guidance
+rather than letting a run die later at the solver.
 
 ```powershell
 .\install.ps1        # prints the WSL instructions; installs nothing
 ```
+
+Keep the repository and the work directory in your WSL home. Your Windows drives
+are mounted under `/mnt/c`, so data downloaded on the Windows side is reachable,
+but reducing a night across `/mnt` is several times slower.
+
+> **Why WSL and not a native install?** ASTAP does publish a Windows build, so
+> the solver is no longer the obstacle it once was. What is missing is the rest:
+> `install.sh` is a shell script, the test suite and the packaging classifiers
+> target Linux and macOS, and no native Windows configuration has been verified
+> end to end. WSL is the route that is tested, so it is the route that is
+> documented.
 
 ### If something is wrong
 
@@ -126,24 +209,36 @@ steps.
 cassa-doctor
 ```
 
-It reports your Python and package versions against what the pipeline requires,
-which plate-solving backends are usable, where astrometry index files will come
-from, whether the reference catalogs are reachable, and whether the working
-directory is writable — one line each, with the fix for anything that failed.
-Paste its output when asking for help.
+It reports your platform, your Python and package versions against what the
+pipeline requires, which plate-solving backends are usable, how many ASTAP star
+tiles are cached, where astrometry index files will come from, whether the
+reference catalogs are reachable, and whether the working directory is writable
+— one line each, with the fix for anything that failed. Paste its output when
+asking for help.
 
 ### About the plate solver
 
-Phase 2 needs one of two backends, and the installer arranges whichever suits
-your machine:
+Phase 2 needs one, and **three backends** can provide it. `install.sh` tries
+them in this order and the first that installs wins; `solver: auto` then prefers
+whichever is present, in the same order.
 
 | Backend | Where it comes from | Available on |
 |---|---|---|
-| `solve-field` | conda-forge `astrometry`, or your system package manager | Linux x86-64, macOS Intel. Preferred when present. |
-| in-process | `pip install "cassa-photometry[solver]"` | Linux x86-64, macOS Intel **and Apple Silicon**. |
+| **`astap`** | `apt install astap-cli`, else the upstream zip | Linux **x86-64 and aarch64**, macOS **Intel and Apple Silicon** |
+| `solve-field` | conda-forge `astrometry`, or your system package manager | Linux x86-64, macOS Intel |
+| `astrometry-py` | `pip install "cassa-photometry[solver]"` | Linux x86-64, macOS Intel and Apple Silicon |
 
-Neither exists for Windows or for ARM Linux, which is why those go through WSL
-and x86-64 respectively.
+ASTAP leads because it is the only backend that exists everywhere this pipeline
+runs — on ARM Linux there is no astrometry.net solver from either channel — and
+because it is an 875 KB binary with no Python dependency. On the CASSA test
+frames it solved in **0.11 s** against 41 s for the in-process solver, and it
+recovered the true plate scale from a header that stated it wrongly.
+
+`solve-field` and the PyPI solver must **never both** be installed: conda-forge's
+Astrometry.net package ships Python bindings that import under the same name as
+the PyPI solver, and whichever lands second wins. `install.sh` adds the PyPI one
+only when `solve-field` is absent; `cassa-doctor` reports which backend is in
+use.
 
 The solver is deliberately **not** in `environment.yml`: conda-forge has no
 `osx-arm64` build of `astrometry`, and an environment file has no way to say
@@ -151,44 +246,54 @@ The solver is deliberately **not** in `environment.yml`: conda-forge has no
 outright on an Apple Silicon Mac. `install.sh` installs it afterwards, picking
 the backend the platform can run.
 
-The two must never both be installed: conda's Astrometry.net package ships
-Python bindings that import under the same name as the PyPI solver. `install.sh`
-adds the PyPI one only when `solve-field` is absent.
+**The products do not depend on which one ran.** See
+[Astrometric error](#astrometric-error) above.
 
-### Astrometry index files
+### Star databases and index files: nothing to download
 
-Plate solving matches star patterns against sky *index files*. **You do not need
-to download them.** The pipeline works out which files a field requires and
-fetches those from the public Astrometry.net server, caching them under
-`~/.cache/cassa-photometry/astrometry`.
+Plate solving matches star patterns against pre-computed sky data. **You do not
+need to fetch any of it in advance.** Whichever backend is in use, the pipeline
+reads the frame — pointing from the header, field size from the plate scale and
+the array dimensions — works out which files that field requires, checks what is
+already cached, and fetches only the difference.
 
-The saving is the point: a CASSA 8-inch field needs **4 files, 165 MB** out of
-the ~34 GB the server offers — 0.5% of the set.
+| | ASTAP | Astrometry.net |
+|---|---|---|
+| Per field | **~6 MB** of star tiles | ~246 MB of index files |
+| Full published set | 859 MB | ~34 GB |
+| Cache | `~/.cache/cassa-photometry/astap` | `~/.cache/cassa-photometry/astrometry` |
+| Config override | `phase2.astap_db_dir` | `phase2.index_cache_dir` |
+| Environment variable | `CASSA_ASTAP_DB` | `CASSA_INDEX_CACHE` |
+| Turn fetching off | `phase2.astap_db_download: false` | `phase2.index_download: false` |
 
-To see what a dataset will need before committing to the download, or to prepare
-a laptop before going somewhere without a network:
+ASTAP publishes no per-tile URL — its star databases are distributed as one
+859 MB ZIP. The pipeline reads individual tiles out of that archive with HTTP
+range requests: a ZIP's central directory lists every member's offset, so only
+the members a field needs are ever transferred. The central directory costs
+85 KB, the tiles about 6 MB, and the observatory hosts nothing.
+
+Repointing therefore costs only the tiles the new field adds. Measured on the
+workshop data: 6.3 MB and 65 s for the first field from an empty cache, then
+**1.2 s** for the next field with no download at all.
+
+For the Astrometry.net path you can see or pre-fetch the cost:
 
 ```bash
 cassa-index-fetch --from-headers raw/ --dry-run    # what it needs, and how big
 cassa-index-fetch --from-headers raw/              # fetch it
 ```
 
-If you already have a full local set, point the pipeline at it and nothing will
-be downloaded:
+A full local set you manage yourself always wins over the cache, and nothing is
+downloaded:
 
 ```bash
-export CASSA_ASTROMETRY_INDEX=/path/to/astrometry_data     # environment variable
-# or set phase2.astrometry_index_dir in a config YAML
-# otherwise the pipeline defaults to ./astrometry_data
+export CASSA_ASTROMETRY_INDEX=/path/to/astrometry_data   # a full index set
+export CASSA_ASTAP_DB=/path/to/astap_database            # an installed ASTAP db
 ```
 
-### Development
-
-```bash
-./install.sh          # includes pytest and ruff
-pytest
-make lint
-```
+Setting `phase2.astap_db_download: false` (or `index_download: false`) still
+performs the selection and reports exactly which files are missing, rather than
+hanging — the air-gapped case.
 
 ## Usage
 
@@ -478,16 +583,32 @@ Three levels, cheapest first, all documented in
 The pipeline is meant to be usable from a laptop away from the university.
 
 ```bash
-cassa-index-fetch --from-headers raw/    # astrometry indexes, once
-cassa-run -i raw -o work --instrument cassa8   # populates the catalog cache
-# ...later, with no network:
+# Reduce the field once, on a network. This populates every cache:
+cassa-run -i raw -o work --instrument cassa8
+# ...later, with no network at all:
 cassa-photometry work/phase2 --offline
 ```
 
-Reference-catalog queries are cached under `~/.cache/cassa-photometry/catalogs`,
-so a field reduced once can be re-reduced with no network at all. `--offline`
-never touches the network and says clearly when a field is not in the cache,
-rather than hanging on a series of timeouts.
+Three caches make this work, all under `~/.cache/cassa-photometry/`: the solver's
+sky data (`astap/` or `astrometry/`) and the reference-catalog queries
+(`catalogs/`). A field reduced once can be re-reduced with no network.
+
+To prepare a laptop for a field it has never seen, warm the solver cache in
+advance:
+
+```bash
+cassa-index-fetch --from-headers raw/ --dry-run   # astrometry.net: the cost first
+cassa-index-fetch --from-headers raw/             # ...then fetch it
+```
+
+ASTAP has no equivalent pre-fetch command because it does not need one: its
+tiles are ~6 MB per field, fetched during the solve itself. Run the reduction
+once while you have a connection and the cache is warm.
+
+`--offline` never touches the network and says clearly when a field is not in the
+cache, rather than hanging on a series of timeouts. `phase2.astap_db_download:
+false` and `phase2.index_download: false` do the same for the solver: selection
+still runs, and the run names exactly which files are missing.
 
 ## Simulated data with known truth
 
@@ -529,7 +650,8 @@ phase1:
                                  # 1% of a frame; no cosmic-ray rate reaches it,
                                  # so it is a crowded field being flagged as one
 phase2:
-  solver: auto                   # auto | solve-field | astrometry-py
+  solver: auto                   # auto | astap | solve-field | astrometry-py
+  astap_db_series: auto          # auto | d50 | d05 | g05 -- chosen by field size
   epoch_bin: night               # none | night | "6h" -- see below
   stack_weight: point_source     # point_source | extended
   fwhm_reject_factor: 1.6        # drop frames softer than 1.6x the median
@@ -621,9 +743,25 @@ pedestal too), so the pipeline warns if asked to rescale one that still has its
 pedestal. Darks of mixed exposure times in one directory are normalised to a
 common exposure before combining rather than averaged incoherently.
 
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| This README | What the pipeline is, and how to run it. |
+| [`docs/REFERENCE.md`](docs/REFERENCE.md) | Every command, flag, config key, environment variable, FITS keyword, catalog column and public function. |
+| [`docs/CUSTOMIZING.md`](docs/CUSTOMIZING.md) | Excluding, reordering and adding steps; describing your setup; changing an algorithm and staying mergeable. |
+| [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | What changed, and what it means for existing data. |
+| [Observatory manual](../docs/main.pdf) | The full treatment: the algorithms, the data-flow diagrams, and the other two observatory packages. |
+| [`workshop/`](workshop/) | A lecture, a participant handbook, and five notebooks that reduce a night with known truth. |
+
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-pytest
+./install.sh          # includes pytest and ruff
+pytest                # 474 tests
+make lint
 ```
+
+The test suite runs without a network and without a plate solver installed: the
+subprocess boundary is faked where that is what is under test, and anything
+needing outbound access is marked `network` (`pytest -m "not network"`).

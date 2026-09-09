@@ -8,10 +8,11 @@ Materials for a two-part workshop on the `cassa-photometry` pipeline:
   8-inch frames whose **true answers are known**, inspecting the SCI/ERR/DQ
   planes and the catalog at each step, and scoring the result against truth.
 
-Phase 2 plate-solves against Astrometry.net index files, which the pipeline
-**fetches automatically** for the field (about 165 MB for this one) unless a
-local set is already available. Phase 3's zero point queries reference catalogs
-online the first time and caches them, after which `--offline` works.
+Phase 2 plate-solves, and whichever backend your machine installed, the sky data
+it needs is **fetched automatically for this field** — about 6 MB of star tiles
+for ASTAP, or ~165 MB of index files for Astrometry.net — unless a local set is
+already available. Phase 3's zero point queries reference catalogs online the
+first time and caches them, after which `--offline` works.
 
 Each phase writes into its own directory under `work/`:
 `work/phase1` (calibrated) → `phase2` (masters + WCS) → `phase3` (catalogs) →
@@ -81,20 +82,21 @@ generation step; everything else works the same, minus the truth comparisons.
    cd /path/to/photometric_pipeline
    ./install.sh
    ```
-   This brings JupyterLab too. On Windows, do it inside WSL — there is no plate
-   solver for native Windows. `workshop/handbook/participant_handbook.pdf` walks
-   through it for all three platforms.
-2. **Astrometry.net index files** — nothing to do. The pipeline fetches the few
-   this field needs. On a shared machine that already holds a full set, point at
-   it instead and nothing is downloaded:
+   This brings JupyterLab too, and installs a plate solver: ASTAP first, then
+   `solve-field`, then the in-process solver, whichever your platform can run.
+   On Windows, do all of it inside WSL. `workshop/handbook/participant_handbook.pdf`
+   walks through it step by step for all three platforms.
+2. **Star databases / index files** — nothing to do. The pipeline works out what
+   this field needs and fetches only that. On a shared machine that already
+   holds a full set, point at it instead and nothing is downloaded:
    ```bash
-   export CASSA_ASTROMETRY_INDEX=/path/to/astrometry_data
+   export CASSA_ASTROMETRY_INDEX=/path/to/astrometry_data   # Astrometry.net
+   export CASSA_ASTAP_DB=/path/to/astap_database            # or ASTAP
    ```
 3. **Network** — needed once, for notebook `04`'s reference-catalog query and
-   (unless a local index set exists) for the index fetch. Both are cached, so a
-   second pass runs offline. On a compute node with no outbound access, run
-   notebook `04` once somewhere that has it, or use
-   `cassa-index-fetch --from-headers raw/` and `--offline` afterwards.
+   for the solver's sky data. Both are cached, so a second pass runs offline. On
+   a compute node with no outbound access, run notebooks `03` and `04` once
+   somewhere that has it, and use `--offline` afterwards.
 4. **Check it all works** before the session:
    ```bash
    cassa-doctor
@@ -122,7 +124,7 @@ reduction printed beside it, so you can tell at a glance whether your run agrees
 
 | Notebook | What it does |
 |----------|--------------|
-| `00_setup` | Verify env, package, index dir, `solve-field`, dataset. |
+| `00_setup` | Verify env, package, plate solver, sky-data cache, dataset. |
 | `01_raw_frame_health` | Inventory the raw frames, then health-check them: a go/no-go verdict before anything is reduced. |
 | `02_phase1_calibration` | Run ISR → `calibrated_*.fits`; watch ERR/DQ populate, then audit the bad-pixel mask. |
 | `03_phase2_integration` | Align + stack + WCS-solve → `Master_*.fits`. |

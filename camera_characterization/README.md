@@ -26,7 +26,7 @@ package is the analysis code (**Part V**).
 ## Installation
 
 ```bash
-conda activate pipeline_env      # provides numpy/scipy/astropy/matplotlib
+conda activate cassa-photometry  # provides numpy/scipy/astropy/matplotlib
 cd camera_characterization
 pip install -e . --no-deps --no-build-isolation
 ```

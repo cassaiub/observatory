@@ -42,14 +42,17 @@ TRUTH_FRAMES = os.path.join(WORKSHOP_DIR, "truth_frames.csv")
 #: The profile the simulated data was taken with.
 INSTRUMENT = os.environ.get("CASSA_INSTRUMENT", "cassa8")
 
-#: Astrometry.net index files for phase 2.
+#: A full local Astrometry.net index set, if one exists beside the checkout.
 #:
-#: The pipeline's own default is ``./astrometry_data`` *relative to the working
-#: directory*, which from ``workshop/notebooks`` resolves to a path that does not
-#: exist -- the set that ships with the checkout sits beside ``workshop/``. So
-#: point the pipeline at it, unless the environment already names one, which
-#: wins: on a shared machine the indexes are usually a read-only directory
-#: somebody else maintains.
+#: Nothing needs this: whichever backend solves, the sky data a field needs is
+#: worked out from the frame and fetched on demand into
+#: ``~/.cache/cassa-photometry/``. But the pipeline's own default is
+#: ``./astrometry_data`` *relative to the working directory*, which from
+#: ``workshop/notebooks`` resolves to a path that does not exist -- a set that
+#: ships with the checkout sits beside ``workshop/``. So point the pipeline at
+#: it when it is there, unless the environment already names one, which wins: on
+#: a shared machine the indexes are usually a read-only directory somebody else
+#: maintains.
 ASTROMETRY_INDEX_DIR = os.environ.get(
     "CASSA_ASTROMETRY_INDEX",
     os.path.join(os.path.dirname(WORKSHOP_DIR), "astrometry_data"),
@@ -58,15 +61,33 @@ if os.path.isdir(ASTROMETRY_INDEX_DIR):
     os.environ["CASSA_ASTROMETRY_INDEX"] = ASTROMETRY_INDEX_DIR
 
 
+def _solver_summary():
+    """Which plate-solving backend a run would use, and which are installed.
+
+    Three backends can solve, and any one is enough -- the products are the
+    same whichever ran, because the pipeline measures the astrometric residual
+    itself rather than taking it from the solver. So the useful answer is the
+    one that would actually be used, not whether a particular binary is on PATH.
+    """
+    try:
+        from cassa_photometry.config import load_config
+        from cassa_photometry.phase2_integration.solvers import available_backends
+
+        usable = available_backends(load_config())
+    except Exception as exc:  # pragma: no cover - diagnostic path only
+        return f"could not be determined ({exc})"
+    if not usable:
+        return "NONE INSTALLED -- phase 2 cannot solve a WCS; run cassa-doctor"
+    return f"{usable[0]}  (also available: {', '.join(usable[1:]) or 'none'})"
+
+
 def show_config():
     """Print the resolved paths and the environment, and check the essentials."""
-    import shutil
-
     import cassa_photometry
 
     print(f"cassa-photometry {cassa_photometry.__version__}")
     print(f"python           {sys.version.split()[0]}")
-    print(f"solve-field      {shutil.which('solve-field') or 'not on PATH (in-process solver will be used)'}")
+    print(f"plate solver     {_solver_summary()}")
     print()
     for label, path in (
         ("workshop", WORKSHOP_DIR), ("raw", RAW_DIR), ("work", WORK_DIR),
