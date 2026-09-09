@@ -28,11 +28,21 @@ cassa_observatory/
 
 ## Installation
 
-**Supported platforms: Linux and macOS**, on both Intel and ARM. Windows works
-through WSL, which is real x86-64 Linux — every instruction then applies
-unchanged inside it.
+**Linux, macOS and Windows.** One script per platform; it picks an environment,
+installs every dependency **including a working plate solver**, installs the
+package, registers the Jupyter kernel, and then runs `cassa-doctor` to prove it
+worked. Running it again updates in place.
 
-The photometric pipeline installs itself:
+| Platform | Route | Solver you get |
+|---|---|---|
+| **Linux x86-64** | `./install.sh` | ASTAP, else `solve-field`, else in-process |
+| **Linux aarch64** (Raspberry Pi, ARM servers) | `./install.sh --conda` | **ASTAP only** — nothing else is published for ARM Linux |
+| **macOS Intel** | `./install.sh` | ASTAP, else `solve-field`, else in-process |
+| **macOS Apple Silicon** | `./install.sh` | ASTAP, else in-process (`solve-field` has no `osx-arm64` build) |
+| **Windows x64 / ARM64** | `.\install.ps1` | **ASTAP only** — it is the one backend published for Windows |
+| **Windows**, alternatively | WSL, then the Linux route | as Linux x86-64 |
+
+**Linux and macOS**
 
 ```bash
 git clone https://github.com/cassaiub/observatory.git
@@ -42,10 +52,24 @@ conda activate cassa-photometry
 cassa-doctor
 ```
 
-`install.sh` picks an environment, installs every dependency **including a
-working plate solver**, installs the package, and then runs `cassa-doctor` to
-prove it worked. Part II of the documentation has the step-by-step procedure for
-each of the three operating systems, plus the HPC network-drive workaround.
+**Windows**
+
+```powershell
+git clone https://github.com/cassaiub/observatory.git
+cd observatory\photometric_pipeline
+.\install.ps1
+cassa-doctor
+```
+
+`install.ps1` does the same things as `install.sh`, with the same options in
+PowerShell form (`-Conda`, `-Venv`, `-NewEnv`, `-EnvName`, `-NoDev`,
+`-NoDoctor`). WSL still works if you prefer it — it is real x86-64 Linux, so
+every instruction applies unchanged inside it, and `.\install.ps1 -Wsl` prints
+the setup steps without installing anything.
+
+Install [Miniforge](https://conda-forge.org/download/) first if you have no
+conda. **Part II of the documentation** has the step-by-step procedure for each
+platform, the macOS Gatekeeper note, and the HPC network-drive workaround.
 
 The other two packages install into the same environment:
 
@@ -54,18 +78,58 @@ pip install -e DIMM
 pip install -e camera_characterization
 ```
 
-Notes:
-- **There is nothing to download for plate solving.** Three backends can supply
-  it — ASTAP, Astrometry.net's `solve-field`, and an in-process PyPI solver —
-  and the installer picks the one your platform can run. Whichever it is, the
-  sky data is fetched **per field**: about 6 MB for ASTAP, ~246 MB for
-  Astrometry.net, cached under `~/.cache/cassa-photometry/`. An existing local
-  set is used in preference (`CASSA_ASTROMETRY_INDEX`, `CASSA_ASTAP_DB`).
-- The reduction **products do not depend on which backend solved**: the
-  astrometric residual `ASTRMS` is measured by the pipeline rather than taken
-  from the solver, and the header records which route was used as `ASTRMSRC`.
-- Large data (raw frames, calibration campaigns, sky databases) is git-ignored;
-  only source, configs, and documentation are tracked.
+### There is nothing to download for plate solving
+
+Three backends can supply it — **ASTAP**, Astrometry.net's `solve-field`, and an
+in-process PyPI solver — and the installer picks the one your platform can run,
+trying them in that order. ASTAP leads because it is the only one published for
+every platform here: conda-forge builds `astrometry` for `linux-64`/`osx-64`
+only, and PyPI's `astrometry` ships no aarch64 and no Windows wheel, so without
+ASTAP an ARM Linux box and any Windows machine have **no solver at all**.
+
+Whichever lands, the sky data is fetched **per field** — about 6 MB for ASTAP,
+~246 MB for Astrometry.net — and cached under `~/.cache/cassa-photometry/`. An
+existing local set is used in preference (`CASSA_ASTROMETRY_INDEX`,
+`CASSA_ASTAP_DB`) and nothing is downloaded.
+
+**The products do not depend on which backend solved.** The astrometric residual
+`ASTRMS` is measured by the pipeline rather than taken from the solver, and the
+header records which route was used as `ASTRMSRC`.
+
+### Choosing how much of the machine to use
+
+Phase 2 holds a whole stack plus its variance planes in memory at once. By
+default it asks on a terminal and takes half the cores when there is nobody to
+ask. Three settings override that, on the command line or in a config file —
+and setting any of them also switches off the prompt:
+
+```bash
+cassa-integrate work/phase1 --cpu-fraction 0.5   # half this machine's cores
+cassa-integrate work/phase1 --cores 4            # a hard ceiling
+cassa-integrate work/phase1 --max-memory-gb 8    # warn before it does not fit
+```
+
+### Jupyter
+
+Both installers register a kernel called **`Python (CASSA photometry)`**.
+Check that name appears in the top-right of every notebook; if not, *Kernel →
+Change Kernel*. Installing packages sets up an environment, it does not make an
+existing Jupyter offer it — and the resulting `ModuleNotFoundError: No module
+named 'cassa_photometry'` looks exactly like a failed install.
+
+### If something is wrong
+
+```bash
+cassa-doctor
+```
+
+One line per check — platform, versions, which solver backends are usable and
+which one a run would pick, both sky-data caches, network reachability, write
+permissions — with the fix for anything that failed. Paste its output when
+asking for help.
+
+Large data (raw frames, calibration campaigns, sky databases) is git-ignored;
+only source, configs, and documentation are tracked.
 
 ## Documentation
 
@@ -91,6 +155,7 @@ Shorter, task-focused documents live with the pipeline itself:
 | [`photometric_pipeline/docs/REFERENCE.md`](photometric_pipeline/docs/REFERENCE.md) | The same reference as Part VI, in markdown. |
 | [`photometric_pipeline/docs/CUSTOMIZING.md`](photometric_pipeline/docs/CUSTOMIZING.md) | Excluding, reordering and adding reduction steps; describing your own setup; changing an algorithm and staying mergeable with upstream. |
 | [`photometric_pipeline/docs/CHANGELOG.md`](photometric_pipeline/docs/CHANGELOG.md) | What changed, and what it means for existing data. |
+| [`photometric_pipeline/docs/WINDOWS-TESTING.md`](photometric_pipeline/docs/WINDOWS-TESTING.md) | Windows: what is verified, the two platform bugs the first Windows run exposed, and the details worth knowing. |
 | [`photometric_pipeline/workshop/`](photometric_pipeline/workshop/) | A lecture, a participant handbook, and five notebooks that reduce a night with known truth. |
 
 ## License

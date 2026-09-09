@@ -80,14 +80,17 @@ generation step; everything else works the same, minus the truth comparisons.
    then one command from a clone:
    ```bash
    cd /path/to/photometric_pipeline
-   ./install.sh
+   ./install.sh          # Linux, macOS, WSL
+   ```
+   ```powershell
+   cd \path\to\photometric_pipeline
+   .\install.ps1         # Windows
    ```
    This brings JupyterLab too, and installs a plate solver: ASTAP first, then
    `solve-field`, then the in-process solver, whichever your platform can run.
-   On Windows run `.\install.ps1` instead — it does the same things, ASTAP and
-   all. WSL also works if you prefer it.
    `workshop/handbook/participant_handbook.pdf` walks through it step by step
-   for all three platforms.
+   for all three platforms; Part II of the observatory manual has the full
+   version, including the macOS Gatekeeper note and the HPC workaround.
 
    The installer also registers the Jupyter kernel. Check the kernel name in the
    top-right of every notebook reads **`Python (CASSA photometry)`**; if not,
