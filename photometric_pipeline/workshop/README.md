@@ -10,7 +10,7 @@ Materials for a two-part workshop on the `cassa-photometry` pipeline:
 
 Phase 2 plate-solves, and whichever backend your machine installed, the sky data
 it needs is **fetched automatically for this field** — about 6 MB of star tiles
-for ASTAP, or ~165 MB of index files for Astrometry.net — unless a local set is
+for ASTAP, or a few hundred MB of index files for Astrometry.net — unless a local set is
 already available. Phase 3's zero point queries reference catalogs online the
 first time and caches them, after which `--offline` works.
 
@@ -20,29 +20,58 @@ Each phase writes into its own directory under `work/`:
 
 ```
 workshop/
-├── slides/     cassa_photometry_lecture.tex   # Beamer lecture
+├── slides/     cassa_photometry_lecture.pdf   # the lecture (source not tracked)
+├── handbook/   participant_handbook.pdf       # read this first
 ├── notebooks/  00_setup … 04_phase3_photometry.ipynb
-├── raw/        the dataset  (not in git -- generate it, see below)
+├── raw/        the dataset  (in git -- one real night, ready to reduce)
 └── work/       pipeline output       (not in git; created when you run)
 ```
 
 ### The dataset
 
-`raw/` holds whatever tree you put there: the notebooks and the pipeline search
-it recursively, so a night straight from the acquisition software —
+**It ships with the repository.** `raw/` holds one real night — 77 frames,
+155 MB — so a clone has something to reduce immediately:
 
 ```
-raw/20260903/BIAS/untargeted/   20260903T054529.715412_untargeted_Blue_BIAS_....fits
-raw/20260903/DARK/untargeted/   ...
-raw/20260903/FLAT/untargeted/   ...
-raw/20260903/LIGHT/m22/         20260903T043707.171323_m22_Luminance_LIGHT_....fits
+raw/20230822/
+├── Bias/               10 frames   0 s
+├── Dark/               10 frames  60 s
+├── Flat/               43 frames   3 s   (B 18, R 15, V 10)
+└── Light/NGC7331/      14 frames  60 s   (B 5, R 5, V 4)
 ```
 
-— is used as-is, and so is the flat directory the simulator writes. Frames are
-sorted by their `IMAGETYP`/`FILTER`/`EXPTIME` headers, never by folder name.
-Notebook 00 prints what it found, directory by directory.
+NGC 7331, observed 2023-08-23 on an iTelescope **CDK700 with an Andor
+DU934P** CCD, 1024×1024. Real data, with the mess that implies — which is the
+point. Two things in particular are worth meeting on real frames:
 
-**Or generate one — there is nothing to download.**
+- **The header's plate scale is wrong.** `SECPIX` says 0.4″/px; the truth is
+  0.5905″/px, a 32% error. A wrong scale hint makes a solve *fail* where a
+  missing one only makes it slow, so the pipeline solves anyway and then says
+  so. You will see the warning in phase 2.
+- **The header carries no gain or read noise.** Neither `EGAIN` nor `READNOIS`
+  is present, so phase 1 falls back to the configured constants and says so:
+
+  ```
+  No gain in the header (EGAIN/GAIN/SYSGAIN) and 'Generic Instrument' has none
+  for this detector; assuming 1.0 e-/ADU. Every uncertainty downstream is an
+  estimate until EGAIN is written at acquisition or the profile is measured.
+  ```
+
+  That warning is the pipeline working correctly, not a fault to fix. It is
+  also why the shipped night reduces with `generic` rather than `cassa8` — the
+  CASSA profile describes an IMX585 CMOS, and applying its gain curve to an
+  Andor CCD would replace an honest assumption with a confident wrong number.
+
+`raw/` holds whatever tree you put there, so your own night works too: the
+notebooks and the pipeline search it recursively, and frames are sorted by their
+`IMAGETYP`/`FILTER`/`EXPTIME` headers, never by folder name. Notebook 00 prints
+what it found, directory by directory.
+
+### Simulated data instead, when you want the true answers
+
+The shipped night is real, so nobody knows the true magnitudes. For scoring a
+reduction rather than inspecting it, generate a simulated night — there is
+nothing to download:
 
 ```bash
 cd workshop
@@ -50,16 +79,11 @@ cassa-simulate --preset workshop --out .
 ```
 
 That writes `raw/` (65 frames: 15 science in B/V/R, 30 flats, 10 darks, 10 bias)
-plus three truth files. It takes a couple of minutes and is **reproducible from
-a seed**, so everyone in the room has bit-identical frames.
-
-The data simulate the CASSA 8-inch f/5 + IMX585 on NGC 7331: one night, a
-2048×1400 window (20.4′ × 14.0′) at 0.598″/px. The star field is **real** — Gaia
-DR3 positions with synthetic Johnson-Cousins magnitudes — so the frames
-genuinely plate-solve and the reference-catalog cross-match genuinely finds the
-stars.
-
-What makes it worth learning on is the truth files:
+plus three truth files, in a couple of minutes, **reproducibly from a seed** so
+everyone in the room has bit-identical frames. It simulates the CASSA 8-inch f/5
++ IMX585 on NGC 7331: one night, a 2048×1400 window (20.4′ × 14.0′) at
+0.598″/px, on a **real** star field — Gaia DR3 positions with synthetic
+Johnson-Cousins magnitudes — so the frames genuinely plate-solve.
 
 | File | Contents |
 |---|---|
@@ -67,12 +91,15 @@ What makes it worth learning on is the truth files:
 | `truth_frames.csv` | every frame's true seeing, transparency, airmass and zero point |
 | `truth_config.yaml` | the detector and photometric model used |
 
-So every measurement in the notebooks can be scored, not just inspected. That is
-the point: a reduction that *looks* right and a reduction that *is* right are
-not distinguishable by eye.
+So every measurement can be scored, not just inspected. That is the point: a
+reduction that *looks* right and a reduction that *is* right are not
+distinguishable by eye.
 
-Working with your own data instead? Point `RAW_DIR` at it and skip the
-generation step; everything else works the same, minus the truth comparisons.
+> It writes into `raw/`, so move or rename the shipped night first if you want
+> to keep both.
+
+Working with your own data instead? Point `RAW_DIR` at it; everything else works
+the same, minus the truth comparisons.
 
 ## Prerequisites (once, per HPC account)
 

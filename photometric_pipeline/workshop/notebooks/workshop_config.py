@@ -39,8 +39,18 @@ PHASE4_DIR = os.path.join(WORK_DIR, "phase4")
 TRUTH_SOURCES = os.path.join(WORKSHOP_DIR, "truth_sources.csv")
 TRUTH_FRAMES = os.path.join(WORKSHOP_DIR, "truth_frames.csv")
 
-#: The profile the simulated data was taken with.
-INSTRUMENT = os.environ.get("CASSA_INSTRUMENT", "cassa8")
+#: Which instrument profile to reduce with.
+#:
+#: ``generic`` is correct for the shipped night: it is iTelescope data from a
+#: CDK700 with an Andor DU934P CCD, and the ``cassa8`` profile describes a
+#: completely different detector -- an IMX585 CMOS, whose gain curve would be
+#: applied to a CCD that has nothing to do with it. Those frames carry no
+#: ``EGAIN`` or ``READNOIS``, so phase 1 falls back to the configured constants
+#: and warns per frame, which is the honest outcome.
+#:
+#: Set ``CASSA_INSTRUMENT=cassa8`` when reducing frames that really did come
+#: from the CASSA 8-inch -- ``cassa-simulate`` writes those.
+INSTRUMENT = os.environ.get("CASSA_INSTRUMENT", "generic")
 
 #: A full local Astrometry.net index set, if one exists beside the checkout.
 #:
