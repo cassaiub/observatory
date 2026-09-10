@@ -16,13 +16,10 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Topic :: Scientific/Engineering :: Astronomy",
     "Intended Audience :: Science/Research",
-    # Linux and macOS are verified. Windows is listed because every piece is
-    # now present -- ASTAP publishes win64/win32/ARM64 command-line builds, and
-    # every runtime dependency has a Windows wheel -- and install.ps1 installs
-    # them. It is not yet verified end to end, which is why `cassa-doctor`
-    # reports native Windows as provisional rather than OK, and why the
-    # documentation still recommends WSL. Remove the Development Status caveat
-    # in the docs, not this classifier, once a Windows install is confirmed.
+    # All three are supported and have been installed and run: ASTAP publishes
+    # win64/win32/ARM64 command-line builds, the runtime dependencies have
+    # wheels for every platform here, and install.sh / install.ps1 cover them.
+    # WSL remains a fine route on Windows, but it is no longer the only one.
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS :: MacOS X",
     "Operating System :: Microsoft :: Windows",

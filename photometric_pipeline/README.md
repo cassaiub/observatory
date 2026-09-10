@@ -261,20 +261,39 @@ Add them when you want them:
 pip install -e ".[notebook]"
 ```
 
-**2. You may need a C compiler.** conda ships prebuilt binaries, so nothing ever
-compiles; pip needs a wheel for *your* Python version and falls back to building
-from source when there is none. On the 3.14 test above, two packages had no
-3.14 wheel:
+**2. Your Python version matters more than anything else here.** conda ships
+prebuilt binaries, so nothing ever compiles; pip needs a wheel for *your* Python
+version and falls back to building from source when there is none — and a source
+build of `sep` needs a C compiler **and** the Python development headers.
+
+> **Use Python 3.10–3.13 and none of this applies.** Every dependency is a
+> prebuilt wheel there, on Linux, macOS and Windows alike. `sep` publishes
+> wheels up to cp313 and no further, so 3.14 is the first version that has to
+> build it.
+
+If you do end up on a newer Python, the installer checks for the compiler and
+the headers **before** pip runs and tells you what to install — rather than
+letting the build fail with `fatal error: Python.h: No such file or directory`
+buried in compiler output. On the 3.14 test above, two packages had no 3.14
+wheel:
 
 | Package | Built from source because | Needs a compiler? |
 |---|---|---|
 | `sep` | no wheel past cp313 | **Yes** — C extension. Needs `gcc` and the Python headers (`python3-dev` / `python3-devel`) |
 | `pims` | publishes no wheels at all, sdist only | No — pure Python |
 
-Both built cleanly here. On **Python 3.11–3.13 every C extension is a prebuilt
-wheel**, so no compiler is needed — `pims` is still built from its sdist, but
-being pure Python that costs nothing. Those versions are the smoother path if
-you have the choice.
+Both built cleanly *here*, because this machine had `gcc` and `python3-dev`. On
+a machine without the headers the `sep` build is where a 3.14 install stops. The
+three ways out, cheapest first:
+
+```bash
+sudo apt install python3.14-dev                     # or python3-devel, per distro
+rm -rf .venv && python3.13 -m venv .venv && ./install.sh --venv   # a Python with wheels
+./install.sh --conda                                # prebuilt binaries, no compiler
+```
+
+`--venv` **reuses** an existing `./.venv`, so remove a half-built one before
+rebuilding with a different Python, or nothing changes.
 
 **3. ARM Linux is the awkward case.** `photutils` publishes no `linux-aarch64`
 wheel, so a pip-only install on a Raspberry Pi or ARM server compiles it from

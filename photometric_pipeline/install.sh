@@ -100,9 +100,82 @@ esac
 
 [[ -n "$PY" && -x "$PY" ]] || die "could not locate the environment's python."
 
+# --- can this Python install the compiled dependencies? ----------------------
+#
+# Most of the scientific stack ships prebuilt wheels, but only for Python
+# versions the projects have released for. On a Python newer than that -- 3.14
+# at the time of writing -- pip falls back to building from source, and a source
+# build of `sep` needs a C compiler AND the Python development headers.
+#
+# Without the headers pip fails with `fatal error: Python.h: No such file or
+# directory` buried in fifteen lines of compiler output, which says nothing
+# about what to install. Checking first costs nothing and turns that into one
+# actionable line.
+py_headers_present() {
+    "$PY" - <<'PYEOF' >/dev/null 2>&1
+import os, sysconfig, sys
+sys.exit(0 if os.path.exists(
+    os.path.join(sysconfig.get_paths()["include"], "Python.h")) else 1)
+PYEOF
+}
+
+dev_package_hint() {
+    local version
+    version="$("$PY" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+    if   command -v apt-get >/dev/null 2>&1; then echo "sudo apt install python${version}-dev   # or python3-dev"
+    elif command -v dnf     >/dev/null 2>&1; then echo "sudo dnf install python3-devel"
+    elif command -v yum     >/dev/null 2>&1; then echo "sudo yum install python3-devel"
+    elif command -v zypper  >/dev/null 2>&1; then echo "sudo zypper install python3-devel"
+    elif command -v pacman  >/dev/null 2>&1; then echo "sudo pacman -S base-devel"
+    elif command -v apk     >/dev/null 2>&1; then echo "sudo apk add python3-dev build-base"
+    elif [[ "$(uname -s)" == "Darwin" ]];    then echo "xcode-select --install"
+    else echo "install your distribution's Python development headers"
+    fi
+}
+
+check_build_prerequisites() {
+    local pyver missing=()
+    pyver="$("$PY" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+    py_headers_present || missing+=("the Python $pyver development headers")
+    command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || missing+=("a C compiler")
+    [[ ${#missing[@]} -eq 0 ]] && return 0
+
+    warn "This is Python $pyver, and some dependencies may have no wheel for it."
+    warn "If any needs building you are missing: ${missing[*]}."
+    echo ""
+    echo "    Three ways forward, cheapest first:"
+    echo ""
+    echo "      1. Install the build prerequisites:"
+    echo "           $(dev_package_hint)"
+    echo ""
+    echo "      2. Use a Python that has wheels (3.10-3.13). Nothing compiles."
+    echo "         Remove the half-built environment first -- --venv reuses one:"
+    echo "           rm -rf .venv && python3.13 -m venv .venv && ./install.sh --venv"
+    echo ""
+    echo "      3. Use conda, which ships prebuilt binaries and needs no compiler:"
+    echo "           ./install.sh --conda"
+    echo ""
+    return 1
+}
+
 # --- install the package -----------------------------------------------------
 say "Installing cassa-photometry (editable)"
-"$PY" -m pip install -e ".${EXTRAS}"
+check_build_prerequisites || true
+
+if ! "$PY" -m pip install -e ".${EXTRAS}"; then
+    echo ""
+    if ! py_headers_present; then
+        die "pip could not build a dependency from source: the Python development
+    headers are missing, so any C extension without a wheel for this Python
+    fails with 'fatal error: Python.h: No such file or directory'.
+
+    Fix it with one of:
+      $(dev_package_hint)
+      ./install.sh --conda          # prebuilt binaries, no compiler needed
+      rm -rf .venv && python3.13 -m venv .venv && ./install.sh --venv"
+    fi
+    die "pip failed to install the package. The output above says why."
+fi
 
 # --- register a Jupyter kernel -----------------------------------------------
 #

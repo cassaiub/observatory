@@ -9,14 +9,10 @@
     PowerShell counterpart of install.sh, and does the same things in the same
     order.
 
-    NATIVE WINDOWS SUPPORT IS PROVISIONAL. Every piece is in place -- ASTAP
-    publishes command-line builds for win64, win32 and ARM64, and every runtime
-    dependency has a Windows wheel -- but this path has not yet been verified
-    end to end on a Windows machine. WSL remains the route the project tests
-    and recommends, and `-Wsl` prints those instructions instead.
-
-    If you run this and it works, or it does not, please say so: that is what
-    turns "provisional" into "supported".
+    Native Windows is supported: ASTAP publishes command-line builds for
+    win64, win32 and ARM64, and the runtime dependencies have Windows wheels.
+    WSL also works if you already use it -- `-Wsl` prints those instructions
+    instead.
 
 .PARAMETER Conda
     Force the conda route.
@@ -73,8 +69,9 @@ if ($Wsl) {
     Head "cassa-photometry through WSL"
     Write-Host @"
 
-  WSL is real x86-64 Linux, and it is the configuration this project tests.
-  Every instruction in the documentation applies unchanged inside it.
+  WSL is real x86-64 Linux, so every instruction in the documentation applies
+  unchanged inside it. Native Windows works too -- run this script without
+  -Wsl for that.
 "@
     Head "1. Install WSL (once, from an admin PowerShell)"
     Item "wsl --install"
@@ -102,8 +99,24 @@ if ($Wsl) {
 }
 
 Head "cassa-photometry: installing natively on Windows"
-Warn "This path is PROVISIONAL and has not yet been verified end to end."
-Warn "If anything fails, '.\install.ps1 -Wsl' prints the tested WSL route."
+
+# Wheels exist only for the Python versions each project has released for. On a
+# newer Python, pip falls back to building from source -- and on Windows that
+# needs the MSVC build tools, which most machines do not have. Saying so here
+# costs nothing and saves a confusing compiler error later.
+$pyMinor = [int](& { try { (python -c "import sys; print(sys.version_info.minor)") } catch { 0 } })
+if ($pyMinor -ge 14) {
+    Warn "This is Python 3.$pyMinor. Some dependencies (sep, photutils) publish no"
+    Warn "wheel for it yet, so pip would build them from source -- which needs the"
+    Warn "MSVC build tools. Two easier routes:"
+    Item ""
+    Item "  Use a Python that has wheels (3.10-3.13):"
+    Item "    Remove-Item -Recurse -Force .venv; py -3.13 -m venv .venv; .\install.ps1 -Venv"
+    Item ""
+    Item "  Or use conda, which ships prebuilt binaries and needs no compiler:"
+    Item "    .\install.ps1 -Conda"
+    Item ""
+}
 
 # --- choose how to install ---------------------------------------------------
 #
@@ -333,5 +346,5 @@ switch ($mode) {
                 Item "Then try:          cassa --help" }
 }
 Write-Host ""
-Item "Native Windows is provisional. Please report whether this worked --"
-Item "'cassa-doctor' output is the useful thing to send."
+Item "If anything went wrong, 'cassa-doctor' prints the state of the whole"
+Item "install in one screen -- that is the useful thing to send."
