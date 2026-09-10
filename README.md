@@ -71,6 +71,18 @@ Install [Miniforge](https://conda-forge.org/download/) first if you have no
 conda. **Part II of the documentation** has the step-by-step procedure for each
 platform, the macOS Gatekeeper note, and the HPC network-drive workaround.
 
+**Conda is not required.** `./install.sh --venv` (or `.\install.ps1 -Venv`)
+builds a plain virtual environment and the whole pipeline works from pip alone,
+plate solver included — ASTAP is a binary the installer fetches directly, not a
+Python package. Verified end to end on a conda-free Python 3.14: 28 doctor
+checks green, 503 tests passing, and a full three-filter reduction with
+ASTAP-solved WCS and zero points. Two caveats — JupyterLab and `ipykernel` are
+not installed on that route (`pip install -e ".[notebook]"` adds them), and pip
+may need a C compiler where your Python version has no wheel. Both are written
+up in
+[the pipeline README](photometric_pipeline/README.md#installing-without-conda)
+and Part II.
+
 The other two packages install into the same environment:
 
 ```bash
@@ -145,18 +157,20 @@ The full **CASSA Observatory Master Documentation** lives in [`docs/`](docs/)
   key with its default, every environment variable, every FITS keyword and
   catalog column, and the module-by-module Python API
 
-Rebuild it with `latexmk -pdf main.tex`.
+The PDF is tracked; the `.tex` source is not, so rebuilding it needs the
+maintainer's working tree.
 
-Shorter, task-focused documents live with the pipeline itself:
+The compiled manual is what the repository ships. The markdown reference set
+(`REFERENCE.md`, `CUSTOMIZING.md`, `CHANGELOG.md`, `WINDOWS-TESTING.md`), the
+test suite and the LaTeX sources live in the working tree but are deliberately
+not tracked — Part VI covers the same reference material, and Part II the same
+installation ground.
 
 | Document | What it covers |
 |---|---|
-| [`photometric_pipeline/README.md`](photometric_pipeline/README.md) | What the pipeline is, and how to run it. |
-| [`photometric_pipeline/docs/REFERENCE.md`](photometric_pipeline/docs/REFERENCE.md) | The same reference as Part VI, in markdown. |
-| [`photometric_pipeline/docs/CUSTOMIZING.md`](photometric_pipeline/docs/CUSTOMIZING.md) | Excluding, reordering and adding reduction steps; describing your own setup; changing an algorithm and staying mergeable with upstream. |
-| [`photometric_pipeline/docs/CHANGELOG.md`](photometric_pipeline/docs/CHANGELOG.md) | What changed, and what it means for existing data. |
-| [`photometric_pipeline/docs/WINDOWS-TESTING.md`](photometric_pipeline/docs/WINDOWS-TESTING.md) | Windows: what is verified, the two platform bugs the first Windows run exposed, and the details worth knowing. |
-| [`photometric_pipeline/workshop/`](photometric_pipeline/workshop/) | A lecture, a participant handbook, and five notebooks that reduce a night with known truth. |
+| [`photometric_pipeline/README.md`](photometric_pipeline/README.md) | What the pipeline is, how to run it, and how to install it without conda. |
+| [`docs/main.pdf`](docs/main.pdf) | The full treatment, Parts I–VI. |
+| [`photometric_pipeline/workshop/`](photometric_pipeline/workshop/) | A lecture, a participant handbook, five notebooks, and the raw dataset they reduce. |
 
 ## License
 

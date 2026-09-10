@@ -113,15 +113,21 @@ generation step; everything else works the same, minus the truth comparisons.
    cassa-doctor
    ```
 
-## Building the lecture PDF
+## The lecture and handbook PDFs
+
+`slides/cassa_photometry_lecture.pdf` and `handbook/participant_handbook.pdf`
+are tracked and ready to use — that is what a participant needs.
+
+The LaTeX sources are **not** tracked, so rebuilding is a maintainer task, from
+the working tree:
 
 ```bash
 cd slides
 pdflatex cassa_photometry_lecture.tex   # run twice for the outline/TOC
 ```
 
-Requires a TeX install with `beamer` (e.g. `texlive-latex-recommended`). Uses only
-stock Beamer themes so it compiles anywhere.
+That needs a TeX install with `beamer` (e.g. `texlive-latex-recommended`); both
+documents use stock themes only, so they compile anywhere.
 
 ## Running the hands-on notebooks
 

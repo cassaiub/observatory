@@ -10,3 +10,6 @@ dist/
 dimm_output/
 dimm_watch/
 config.yaml
+
+# Test suite: run from a checkout, not shipped.
+tests/

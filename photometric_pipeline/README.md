@@ -22,10 +22,11 @@ A re-run replaces that phase's products in place rather than accumulating copies
 Plus `cassa-verify` (compare catalog magnitudes against APASS/Pan-STARRS/SDSS)
 and `cassa-run` (phases 1–3 chained).
 
-> **Looking something up?** [`docs/REFERENCE.md`](docs/REFERENCE.md) has every
-> command and flag, every configuration key with its default, every environment
-> variable, every FITS keyword and catalog column, and the Python API.
-> [`docs/CUSTOMIZING.md`](docs/CUSTOMIZING.md) covers changing what a run does.
+> **Looking something up?** Part VI of [the observatory manual](../docs/main.pdf)
+> is the complete reference — every command and flag, every configuration key
+> with its default, every environment variable, every FITS keyword and catalog
+> column, and the Python API module by module. Part II covers installation, and
+> the reduction-plan section covers changing what a run does.
 
 ## Error propagation & data model
 
@@ -124,6 +125,11 @@ scientific stack as prebuilt binaries, and includes JupyterLab for the workshop
 notebooks. Install [Miniforge](https://conda-forge.org/download/) first if you
 have no conda.
 
+**Conda is not required, though** — `--venv` builds a plain virtual environment
+and the whole pipeline works from pip alone, plate solver included. See
+[Installing without conda](#installing-without-conda) for the verified run and
+the four things to watch for.
+
 ### Platform support
 
 | Platform | Route | Solver you get |
@@ -196,8 +202,8 @@ with `cassa-doctor`. Same options in PowerShell form: `-Conda`, `-Venv`,
 ASTAP is the only backend Windows has — conda-forge builds `astrometry` for
 `linux-64`/`osx-64` only, and PyPI's `astrometry` ships no Windows wheel — which
 is exactly why the pipeline gained it.
-[`docs/WINDOWS-TESTING.md`](docs/WINDOWS-TESTING.md) records what has been
-verified there and the Windows-specific details worth knowing.
+Part II of the manual records what has been verified there and the
+Windows-specific details worth knowing.
 
 *WSL is still there* if you prefer it, or if you need it for other tools. It is
 real x86-64 Linux, so every instruction above applies unchanged inside it, and
@@ -205,6 +211,83 @@ real x86-64 Linux, so every instruction above applies unchanged inside it, and
 go that way, keep the repository and the work directory in your WSL home:
 Windows drives are mounted under `/mnt/c` and reducing a night across `/mnt` is
 several times slower.
+
+### Installing without conda
+
+Conda is a convenience, not a requirement. `--venv` builds a plain
+`python3 -m venv` in `./.venv` and never invokes conda:
+
+```bash
+./install.sh --venv         # Linux, macOS
+.\install.ps1 -Venv         # Windows
+```
+
+Everything still works, including the plate solver: **ASTAP is not a Python
+package**, so the installer fetches the binary directly (`apt install
+astap-cli`, else the upstream zip) and drops it in the environment's `bin`. In
+venv mode `install.sh` deliberately skips the conda `solve-field` step and goes
+**ASTAP → the pip in-process solver**, so the chain is conda-free by
+construction.
+
+Verified end to end on 2026-09-09, with conda removed from `PATH` and the
+system Python 3.14.4:
+
+```
+cassa-doctor            28 ok, 3 warning(s), 0 failure(s)
+solver: in use          astap  (.venv/bin/astap_cli, 874 KB)
+pytest                  503 passed, 3 skipped
+cassa-run -i workshop/raw -o work
+  3 masters, all WCS-solved:  ASTRMS 0.30" / 0.36" / 0.70"  (WCSSOLVR=astap)
+  3 catalogs with zero points: MAGZERO 21.93, 22.43, 22.57  (79-88 calibrators)
+```
+
+The environment came to **733 MB**.
+
+#### What you give up, and what to watch for
+
+**1. JupyterLab and `ipykernel` are not installed.** `environment.yml` carries
+both; the venv route installs `.[dev]` and stops. The pipeline is unaffected —
+this only matters for the workshop notebooks — and the installer says so rather
+than failing quietly:
+
+```
+==> Registering the Jupyter kernel
+    ipykernel is not installed; skipping (only needed for the notebooks).
+```
+
+Add them when you want them:
+
+```bash
+pip install -e ".[notebook]"
+```
+
+**2. You may need a C compiler.** conda ships prebuilt binaries, so nothing ever
+compiles; pip needs a wheel for *your* Python version and falls back to building
+from source when there is none. On the 3.14 test above, two packages had no
+3.14 wheel:
+
+| Package | Built from source because | Needs a compiler? |
+|---|---|---|
+| `sep` | no wheel past cp313 | **Yes** — C extension. Needs `gcc` and the Python headers (`python3-dev` / `python3-devel`) |
+| `pims` | publishes no wheels at all, sdist only | No — pure Python |
+
+Both built cleanly here. On **Python 3.11–3.13 every C extension is a prebuilt
+wheel**, so no compiler is needed — `pims` is still built from its sdist, but
+being pure Python that costs nothing. Those versions are the smoother path if
+you have the choice.
+
+**3. ARM Linux is the awkward case.** `photutils` publishes no `linux-aarch64`
+wheel, so a pip-only install on a Raspberry Pi or ARM server compiles it from
+source. Everything else has aarch64 wheels. This — not the solver — is why the
+platform table suggests `--conda` there; ASTAP covers ARM fine.
+
+**4. `solve-field` is effectively conda-only** in the automated path. You can
+still install it yourself (`apt install astrometry.net`), but there is little
+reason to: ASTAP is published for every platform the pipeline supports, and
+[the products do not depend on which backend solved](#astrometric-error).
+
+**5. Python version.** The floor is 3.10. `environment.yml` pins 3.11; a venv
+uses whatever `python3` resolves to, so check it first if that matters to you.
 
 ### If something is wrong
 
@@ -258,7 +341,9 @@ and `pipe.hw.estimate` is the dictionary behind it.
 ### Jupyter: the kernel has to be registered
 
 Installing packages sets up an *environment*; it does not make an existing
-Jupyter offer it. `install.sh` and `install.ps1` therefore register the kernel:
+Jupyter offer it. `install.sh` and `install.ps1` therefore register the kernel
+(the conda route brings `ipykernel`; on the `--venv` route add it with
+`pip install -e ".[notebook]"` first):
 
 ```bash
 python -m ipykernel install --user \
@@ -602,8 +687,8 @@ remains — fine for differential photometry, worth stating for absolute work.
 
 ## Customizing a run
 
-Three levels, cheapest first, all documented in
-[`docs/CUSTOMIZING.md`](docs/CUSTOMIZING.md):
+Three levels, cheapest first, all documented in the manual's reduction-plan
+section (Part II):
 
 1. **Config** — turn any reduction step off, reorder the steps, add your own,
    change any threshold. What ran is recorded in the product (`CALPLAN` /
@@ -804,22 +889,24 @@ common exposure before combining rather than averaged incoherently.
 
 | Document | What it covers |
 |---|---|
-| This README | What the pipeline is, and how to run it. |
-| [`docs/REFERENCE.md`](docs/REFERENCE.md) | Every command, flag, config key, environment variable, FITS keyword, catalog column and public function. |
-| [`docs/CUSTOMIZING.md`](docs/CUSTOMIZING.md) | Excluding, reordering and adding steps; describing your setup; changing an algorithm and staying mergeable. |
-| [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | What changed, and what it means for existing data. |
-| [`docs/WINDOWS-TESTING.md`](docs/WINDOWS-TESTING.md) | Windows: what is verified, the two platform bugs that first run found, and the details worth knowing. |
-| [Observatory manual](../docs/main.pdf) | The full treatment: the algorithms, the data-flow diagrams, and the other two observatory packages. |
-| [`workshop/`](workshop/) | A lecture, a participant handbook, and five notebooks that reduce a night with known truth. |
+| This README | What the pipeline is, how to run it, and how to install it — with or without conda. |
+| [Observatory manual](../docs/main.pdf) | The full treatment. **Part II** installation and deployment, **Part III** the algorithms and data flow, **Part VI** the complete reference: every command, flag, config key, environment variable, FITS keyword, catalog column and public function. |
+| [`workshop/`](workshop/) | A lecture, a participant handbook, five notebooks, and the raw dataset they reduce. |
+
+The markdown reference set (`docs/REFERENCE.md`, `docs/CUSTOMIZING.md`,
+`docs/CHANGELOG.md`, `docs/WINDOWS-TESTING.md`) and the test suite live in the
+working tree but are not tracked; the manual covers the same ground.
 
 ## Development
 
 ```bash
 ./install.sh          # includes pytest and ruff
-pytest                # 474 tests
+pytest                # 503 tests
 make lint
 ```
 
-The test suite runs without a network and without a plate solver installed: the
-subprocess boundary is faked where that is what is under test, and anything
-needing outbound access is marked `network` (`pytest -m "not network"`).
+**`tests/` is not tracked**, so a clone of this repository has nothing to run;
+the commands above are for the maintainer's working tree. The suite runs without
+a network and without a plate solver installed — the subprocess boundary is
+faked where that is what is under test, and anything needing outbound access is
+marked `network` (`pytest -m "not network"`).

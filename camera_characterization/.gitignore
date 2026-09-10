@@ -10,3 +10,6 @@ dist/
 camchar_output/
 *_Report.png
 characterization_results.*
+
+# Test suite: run from a checkout, not shipped.
+tests/
